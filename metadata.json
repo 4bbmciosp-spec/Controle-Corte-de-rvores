@@ -1,0 +1,6 @@
+{
+  "name": "CBMRS - Gestão de Ocorrências de Árvores",
+  "description": "Sistema de gestão de ocorrências de corte e vistoria de árvores do Corpo de Bombeiros Militar do RS para COBOM, Comandantes de Guarnição e Pelotão.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

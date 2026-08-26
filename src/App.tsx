@@ -1,0 +1,411 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { 
+  Occurrence, 
+  User, 
+  Squad, 
+  Platoon, 
+  AppNotification 
+} from './types';
+import { 
+  getStoredOccurrences, 
+  getStoredPlatoons, 
+  getStoredSquads, 
+  getStoredUsers, 
+  getCurrentUser, 
+  setCurrentUser as persistCurrentUser,
+  getStoredNotifications, 
+  saveNotifications,
+  resetToSeedData,
+  setSquadInAttendance,
+  getHoursPending
+} from './services/storageService';
+
+// Components
+import { Header } from './components/Header';
+import { StatsDashboard } from './components/StatsDashboard';
+import { OccurrenceList } from './components/OccurrenceList';
+import { ReportsDashboard } from './components/ReportsDashboard';
+import { SquadImportModal } from './components/SquadImportModal';
+import { OccurrenceDetailModal } from './components/OccurrenceDetailModal';
+import { AttendanceFormModal } from './components/AttendanceFormModal';
+import { CobomNewOccurrenceModal } from './components/CobomNewOccurrenceModal';
+import { ShiftHandoverModal } from './components/ShiftHandoverModal';
+import { NotificationsDrawer } from './components/NotificationsDrawer';
+
+import { 
+  ShieldAlert, 
+  PlusCircle, 
+  Flame, 
+  Info, 
+  Clock, 
+  CheckCircle2, 
+  Truck, 
+  ShieldCheck, 
+  PhoneCall,
+  BarChart3,
+  Layers
+} from 'lucide-react';
+
+export default function App() {
+  // Database Entities
+  const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
+  const [platoons, setPlatoons] = useState<Platoon[]>([]);
+  const [squads, setSquads] = useState<Squad[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+
+  // Navigation State
+  const [activeMainTab, setActiveMainTab] = useState<'OPERATIONAL' | 'REPORTS'>('OPERATIONAL');
+
+  // Modals & Drawers State
+  const [detailOccurrence, setDetailOccurrence] = useState<Occurrence | null>(null);
+  const [attendanceOccurrence, setAttendanceOccurrence] = useState<Occurrence | null>(null);
+  const [editOccurrence, setEditOccurrence] = useState<Occurrence | null>(null);
+  const [isNewOccurrenceOpen, setIsNewOccurrenceOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isShiftHandoverOpen, setIsShiftHandoverOpen] = useState(false);
+  const [isSquadImportOpen, setIsSquadImportOpen] = useState(false);
+
+  // Status Filter from Dashboard Cards
+  const [activeStatusFilter, setActiveStatusFilter] = useState<string>('TODOS');
+
+  // Initial Load
+  const loadAllData = useCallback(() => {
+    const loadedOccs = getStoredOccurrences();
+    const loadedPlats = getStoredPlatoons();
+    const loadedSquads = getStoredSquads();
+    const loadedUsers = getStoredUsers();
+    const loadedUser = getCurrentUser();
+    const loadedNotifs = getStoredNotifications();
+
+    setOccurrences(loadedOccs);
+    setPlatoons(loadedPlats);
+    setSquads(loadedSquads);
+    setUsers(loadedUsers);
+    setCurrentUser(loadedUser);
+    setNotifications(loadedNotifs);
+  }, []);
+
+  useEffect(() => {
+    loadAllData();
+  }, [loadAllData]);
+
+  // Periodic Check for 12h/24h recurring alerts for pending unresolved tree incidents
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const currentOccs = getStoredOccurrences();
+      const currentNotifs = getStoredNotifications();
+      let hasNewAlert = false;
+
+      currentOccs.forEach(occ => {
+        if (occ.status === 'PENDENTE') {
+          const hours = getHoursPending(occ);
+          if (hours >= 12) {
+            const alertTag = hours >= 24 ? '24h' : '12h';
+            const notifKey = `recur-alert-${occ.id}-${alertTag}`;
+            
+            const alreadyNotified = currentNotifs.some(n => n.id.includes(notifKey));
+            if (!alreadyNotified) {
+              currentNotifs.unshift({
+                id: `${notifKey}-${Date.now()}`,
+                title: `🚨 Alerta Recorrente: ${occ.protocol} sem conclusão há ${hours}h`,
+                message: `Árvore no endereço ${occ.address} permanece pendente. Acompanhamento prioritário exigido pelo Comando do Pelotão!`,
+                type: hours >= 24 ? 'PENDING_ALERT_24H' : 'PENDING_ALERT_12H',
+                occurrenceId: occ.id,
+                occurrenceProtocol: occ.protocol,
+                targetRoles: ['COBOM', 'GUARNICAO', 'PELOTAO'],
+                targetSquadId: occ.assignedSquadId,
+                createdAt: new Date().toISOString(),
+                isRead: false
+              });
+              hasNewAlert = true;
+            }
+          }
+        }
+      });
+
+      if (hasNewAlert) {
+        saveNotifications(currentNotifs);
+        setNotifications([...currentNotifs]);
+      }
+    }, 45000); // Check every 45s
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Switch User Profile
+  const handleSelectUser = (user: User) => {
+    persistCurrentUser(user);
+    setCurrentUser(user);
+  };
+
+  // Reset demo data
+  const handleResetData = () => {
+    resetToSeedData();
+    loadAllData();
+    setDetailOccurrence(null);
+    setAttendanceOccurrence(null);
+    setEditOccurrence(null);
+    setIsNewOccurrenceOpen(false);
+  };
+
+  // Start Attendance in Field
+  const handleStartAttendance = (occ: Occurrence) => {
+    if (!currentUser?.squadId) {
+      alert('Selecione um perfil de Guarnição para iniciar o atendimento.');
+      return;
+    }
+    const updated = setSquadInAttendance(occ.id, currentUser.squadId);
+    loadAllData();
+    if (detailOccurrence?.id === occ.id) {
+      setDetailOccurrence(updated);
+    }
+  };
+
+  // Mark notification read
+  const handleMarkNotificationAsRead = (id: string) => {
+    const updated = notifications.map(n => n.id === id ? { ...n, isRead: true } : n);
+    saveNotifications(updated);
+    setNotifications(updated);
+  };
+
+  const handleMarkAllNotificationsAsRead = () => {
+    const updated = notifications.map(n => ({ ...n, isRead: true }));
+    saveNotifications(updated);
+    setNotifications(updated);
+  };
+
+  // Select occurrence by protocol from notifications
+  const handleSelectOccurrenceByProtocol = (protocol: string) => {
+    const occ = occurrences.find(o => o.protocol === protocol);
+    if (occ) {
+      setDetailOccurrence(occ);
+    }
+  };
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="text-center space-y-3 text-slate-700">
+          <div className="w-10 h-10 border-4 border-red-700 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="font-mono text-xs font-semibold uppercase tracking-wider">Carregando Sistema CBMRS 4º BBM...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const unreadNotifsCount = notifications.filter(n => {
+    if (n.targetRoles && !n.targetRoles.includes(currentUser.role)) return false;
+    return !n.isRead;
+  }).length;
+
+  const currentSquad = squads.find(s => s.id === currentUser.squadId) || squads[0];
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans selection:bg-red-700 selection:text-white">
+      
+      {/* 1. Official Header */}
+      <Header
+        currentUser={currentUser}
+        allUsers={users}
+        unreadNotificationsCount={unreadNotifsCount}
+        activeMainTab={activeMainTab}
+        onChangeMainTab={setActiveMainTab}
+        onSelectUser={handleSelectUser}
+        onOpenNewOccurrence={() => setIsNewOccurrenceOpen(true)}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
+        onOpenShiftHandover={() => setIsShiftHandoverOpen(true)}
+        onOpenSquadImport={() => setIsSquadImportOpen(true)}
+        onResetData={handleResetData}
+      />
+
+      {/* Role Context Notification Bar */}
+      <div className="bg-red-900 text-red-100 border-b border-red-950 px-4 sm:px-6 py-2 shadow-inner">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span className="text-red-100">
+              Operando como: <strong className="text-white font-bold">{currentUser.rank} {currentUser.name}</strong> ({currentUser.role})
+            </span>
+            <span className="text-red-300 hidden sm:inline">•</span>
+            <span className="text-red-200 hidden sm:inline">
+              {currentUser.role === 'COBOM' 
+                ? 'Central de Despacho 193 (Criação, empenho de guarnições e edição geral)' 
+                : currentUser.role === 'GUARNICAO'
+                  ? `Viatura: ${currentSquad.name} (Atendimentos em campo, registro de desfecho e fotos)`
+                  : 'Acompanhamento Estratégico do Pelotão (Histórico, estatísticas e linha do tempo)'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px] text-red-200 font-mono">
+            <span>Região: <strong className="text-white font-bold">4º BBM Santa Maria</strong></span>
+            <span>•</span>
+            <span>Escala: <strong className="text-white font-bold">Turno 24h</strong></span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5 space-y-5">
+        
+        {activeMainTab === 'REPORTS' ? (
+          /* RELATÓRIOS E ESTATÍSTICAS DO PELOTÃO */
+          <ReportsDashboard
+            occurrences={occurrences}
+            platoons={platoons}
+            squads={squads}
+          />
+        ) : (
+          /* PAINEL OPERACIONAL PADRÃO */
+          <>
+            {/* 2. Stats Dashboard & Handover Alert */}
+            <StatsDashboard
+              occurrences={occurrences}
+              currentUser={currentUser}
+              activeStatusFilter={activeStatusFilter}
+              onFilterStatus={(status) => setActiveStatusFilter(status)}
+              onOpenShiftHandover={() => setIsShiftHandoverOpen(true)}
+            />
+
+            {/* 3. Occurrences List & Tactical Map View */}
+            <OccurrenceList
+              occurrences={occurrences}
+              currentUser={currentUser}
+              squads={squads}
+              platoons={platoons}
+              onSelectOccurrence={(occ) => setDetailOccurrence(occ)}
+              onOpenAttendanceForm={(occ) => setAttendanceOccurrence(occ)}
+              onStartAttendance={handleStartAttendance}
+            />
+          </>
+        )}
+
+      </main>
+
+      {/* Footer / Status Bar */}
+      <footer className="bg-slate-200 border-t border-slate-300 px-4 sm:px-6 py-2.5 text-xs text-slate-600 font-medium">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Flame className="w-4 h-4 text-red-700" />
+            <span className="font-bold text-slate-800">Corpo de Bombeiros Militar do Estado do Rio Grande do Sul</span>
+          </div>
+          <div className="font-mono text-[11px] text-slate-500">
+            4º BBM - Santa Maria • Sistema de Gestão de Vistorias e Cortes Emergenciais de Árvores • Central 193
+          </div>
+        </div>
+      </footer>
+
+      {/* MODALS */}
+      
+      {/* 1. Occurrence Detail Modal */}
+      {detailOccurrence && (
+        <OccurrenceDetailModal
+          occurrence={detailOccurrence}
+          currentUser={currentUser}
+          squads={squads}
+          platoons={platoons}
+          onClose={() => setDetailOccurrence(null)}
+          onOpenAttendanceForm={(occ) => {
+            setDetailOccurrence(null);
+            setAttendanceOccurrence(occ);
+          }}
+          onOpenEditForm={(occ) => {
+            setDetailOccurrence(null);
+            setEditOccurrence(occ);
+          }}
+          onUpdateOccurrence={(updated) => {
+            setDetailOccurrence(updated);
+            loadAllData();
+          }}
+        />
+      )}
+
+      {/* 2. Attendance Registration Form Modal (Squad Commander Field UI) */}
+      {attendanceOccurrence && (
+        <AttendanceFormModal
+          occurrence={attendanceOccurrence}
+          currentSquad={currentSquad}
+          currentUser={currentUser}
+          onClose={() => setAttendanceOccurrence(null)}
+          onSuccess={(updatedOcc) => {
+            setAttendanceOccurrence(null);
+            loadAllData();
+            setDetailOccurrence(updatedOcc);
+          }}
+        />
+      )}
+
+      {/* 3. COBOM New / Edit Occurrence Modal */}
+      {(isNewOccurrenceOpen || editOccurrence) && (
+        <CobomNewOccurrenceModal
+          initialOccurrence={editOccurrence}
+          platoons={platoons}
+          squads={squads}
+          currentUser={currentUser}
+          onClose={() => {
+            setIsNewOccurrenceOpen(false);
+            setEditOccurrence(null);
+          }}
+          onSaved={(savedOcc) => {
+            setIsNewOccurrenceOpen(false);
+            setEditOccurrence(null);
+            loadAllData();
+            setDetailOccurrence(savedOcc);
+          }}
+        />
+      )}
+
+      {/* 4. Shift Handover Report Modal (24h) */}
+      {isShiftHandoverOpen && (
+        <ShiftHandoverModal
+          occurrences={occurrences}
+          currentUser={currentUser}
+          squads={squads}
+          platoons={platoons}
+          onClose={() => setIsShiftHandoverOpen(false)}
+          onSelectOccurrence={(occ) => {
+            setIsShiftHandoverOpen(false);
+            setDetailOccurrence(occ);
+          }}
+        />
+      )}
+
+      {/* 5. Squad Import Modal (e-193 Roster Parser) */}
+      {isSquadImportOpen && (
+        <SquadImportModal
+          squads={squads}
+          users={users}
+          platoons={platoons}
+          onClose={() => setIsSquadImportOpen(false)}
+          onImportSuccess={() => {
+            loadAllData();
+          }}
+          onSquadsUpdated={(updatedSquads, updatedUsers, updatedPlats) => {
+            setSquads(updatedSquads);
+            setUsers(updatedUsers);
+            if (updatedPlats) setPlatoons(updatedPlats);
+          }}
+        />
+      )}
+
+      {/* 6. Notifications Drawer */}
+      {isNotificationsOpen && (
+        <NotificationsDrawer
+          notifications={notifications}
+          currentUser={currentUser}
+          onClose={() => setIsNotificationsOpen(false)}
+          onMarkAsRead={handleMarkNotificationAsRead}
+          onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+          onSelectOccurrenceByProtocol={handleSelectOccurrenceByProtocol}
+        />
+      )}
+
+    </div>
+  );
+}
