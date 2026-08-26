@@ -327,7 +327,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                       <button
                         onClick={() => {
-                          if (confirm('Deseja resetar todas as ocorrências para os dados de demonstração do 4º BBM de Santa Maria?')) {
+                          if (confirm('Deseja limpar os dados e redefinir o estado operacional do sistema?')) {
                             onResetData();
                             setShowProfileMenu(false);
                           }
@@ -335,7 +335,7 @@ export const Header: React.FC<HeaderProps> = ({
                         className="text-red-700 hover:text-red-800 font-semibold flex items-center gap-1 py-1 cursor-pointer"
                       >
                         <RefreshCw className="w-3.5 h-3.5" />
-                        <span>Resetar Dados</span>
+                        <span>Limpar / Resetar</span>
                       </button>
                     </div>
                   </div>

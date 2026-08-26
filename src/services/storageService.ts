@@ -9,6 +9,12 @@ import {
   OccurrencePhoto,
   UserRole
 } from '../types';
+import {
+  insertOccurrenceToSupabase,
+  updateOccurrenceInSupabase,
+  recordAttendanceInSupabase,
+  fetchOccurrencesFromSupabase
+} from './supabaseDataService';
 
 const STORAGE_KEYS = {
   OCCURRENCES: 'cbmrs_arvores_occurrences_v3_sm',
@@ -221,340 +227,11 @@ const now = new Date();
 const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000).toISOString();
 const daysAgo = (days: number) => new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 
-// Seed de Ocorrências em Santa Maria - RS (4º BBM)
-export const SEED_OCCURRENCES: Occurrence[] = [
-  {
-    id: 'occ-sm-1',
-    protocol: 'CBMRS-2026-00482',
-    createdAt: hoursAgo(18), // 18h atrás (Pendente transitada de turno)
-    updatedAt: hoursAgo(14),
-    openedBy: 'COBOM - 2º Sgt Giovani (Ramal 193 Santa Maria)',
-    solicitorName: 'Dona Maria Helena Castro',
-    solicitorPhone: '(55) 99872-4411',
-    address: 'Av. Rio Branco, 450',
-    neighborhood: 'Centro',
-    city: 'Santa Maria',
-    referencePoint: 'Próximo à esquina com Rua Silva Jardim e Catedral',
-    latitude: -29.6834,
-    longitude: -53.8062,
-    description: 'Eucalipto de grande porte tombado sobre a rede de média tensão e muro residencial após vendaval.',
-    type: 'CORTE_ARVORE',
-    dispatchNature: 'Corte de árvore: árvores em fiação de alta tensão',
-    treeRisk: 'GALHO_SOBRE_FIACAO_ENERGIZADA',
-    platoonId: 'plat-1',
-    assignedSquadId: 'squad-abt-1496',
-    status: 'PENDENTE',
-    urgency: 'ALTA',
-    isCarriedOver: true,
-    totalAttendancesCount: 1,
-    lastAttendanceAt: hoursAgo(14),
-    initialPhotos: [
-      {
-        id: 'photo-sm-1',
-        occurrenceId: 'occ-sm-1',
-        url: 'https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?w=800&auto=format&fit=crop&q=80',
-        caption: 'Foto do chamado 193: Árvore apoiada sobre fiação energizada na Av. Rio Branco',
-        uploadedAt: hoursAgo(18),
-        uploadedBySquadName: 'COBOM-SM / Solicitante',
-        stage: 'INICIAL_COBOM'
-      }
-    ],
-    attendances: [
-      {
-        id: 'att-sm-1',
-        occurrenceId: 'occ-sm-1',
-        squadId: 'squad-abt-1238',
-        squadName: 'ABT-1238 (1º Pelotão Santa Maria)',
-        callSign: 'ABT-1238',
-        commanderName: '2º SGT SILVA PAZ',
-        shiftInfo: 'Turno Anterior (24h encerrado às 08:00)',
-        startedAt: hoursAgo(16),
-        finishedAt: hoursAgo(14),
-        statusResult: 'PENDENTE',
-        actionTaken: 'Guarnição isolou o perímetro com cones e fita zebrada. Constatou-se fiação energizada em contato direto com os galhos mestres.',
-        unresolvedReason: 'NECESSIDADE_APOIO_CEEE_EQUATORIAL',
-        unresolvedDetails: 'Aguardando desligamento e isolamento da rede pela RGE/Equatorial (Protocolo RGE-948201). Ocorrência repassada com prioridade para a guarnição do novo turno.',
-        equipmentUsed: ['Fita Zebrada', 'Detectores de Tensão', 'Cones de Trânsito'],
-        photos: []
-      }
-    ]
-  },
-  {
-    id: 'occ-sm-2',
-    protocol: 'CBMRS-2026-00489',
-    createdAt: hoursAgo(28), // 28 horas atrás (> 24h sem solução!)
-    updatedAt: hoursAgo(22),
-    openedBy: 'COBOM - Sd Douglas',
-    solicitorName: 'Prof. Antônio Carlos Silveira (Diretor)',
-    solicitorPhone: '(55) 98144-9988',
-    address: 'Av. Roraima, 1000',
-    neighborhood: 'Camobi',
-    city: 'Santa Maria',
-    referencePoint: 'Em frente à Escola Estadual e Acesso UFSM',
-    latitude: -29.7138,
-    longitude: -53.7175,
-    description: 'Tipuana de porte avantajado com fenda no tronco principal com risco de queda sobre o pátio de recreio escolar e calçada.',
-    type: 'CORTE_ARVORE',
-    dispatchNature: 'Corte de árvore: árvore em escola',
-    treeRisk: 'QUEDA_SOBRE_VIA_PUBLICA',
-    platoonId: 'plat-3',
-    assignedSquadId: 'squad-abt-534',
-    status: 'PENDENTE',
-    urgency: 'CRITICA',
-    isCarriedOver: true,
-    totalAttendancesCount: 1,
-    lastAttendanceAt: hoursAgo(22),
-    initialPhotos: [],
-    attendances: [
-      {
-        id: 'att-sm-2',
-        occurrenceId: 'occ-sm-2',
-        squadId: 'squad-abt-534',
-        squadName: 'ABT-534 (3º Pelotão Camobi)',
-        callSign: 'ABT-534',
-        commanderName: '1º SGT TATIELI',
-        shiftInfo: 'Turno de ontem',
-        startedAt: hoursAgo(24),
-        finishedAt: hoursAgo(22),
-        statusResult: 'PENDENTE',
-        actionTaken: 'Isolamento da área de recreio escolar. Avaliado que a altura do galho estrutural (>15m) exige equipamento de corte em altura.',
-        unresolvedReason: 'ARVORE_GRANDE_PORTE_GUINDASTE',
-        unresolvedDetails: 'Necessário apoio de caminhão cesto aéreo / Auto Escada para amarração e descida controlada por seções sem danificar o telhado do pavilhão escolar.',
-        equipmentUsed: ['Fita Métrica', 'EPI de Altura', 'Motosserra MS-260'],
-        photos: []
-      }
-    ]
-  },
-  {
-    id: 'occ-sm-3',
-    protocol: 'CBMRS-2026-00495',
-    createdAt: hoursAgo(2),
-    updatedAt: hoursAgo(1),
-    openedBy: 'COBOM - 2º Sgt Giovani',
-    solicitorName: 'Carlos Eduardo Nogueira',
-    solicitorPhone: '(55) 99123-7766',
-    address: 'Av. Presidente Vargas, 1850',
-    neighborhood: 'Patronato',
-    city: 'Santa Maria',
-    referencePoint: 'Próximo ao Ginásio do Patronato',
-    latitude: -29.6958,
-    longitude: -53.8241,
-    description: 'Árvore caiu atravessada na pista durante vento forte, interrompendo o fluxo nos dois sentidos da avenida.',
-    type: 'DESOBSTRUCAO_VIA',
-    dispatchNature: 'Corte de árvore: árvore na via, interdição total',
-    treeRisk: 'QUEDA_SOBRE_VIA_PUBLICA',
-    platoonId: 'plat-1',
-    assignedSquadId: 'squad-abt-1496',
-    status: 'EM_ATENDIMENTO',
-    urgency: 'CRITICA',
-    isCarriedOver: false,
-    totalAttendancesCount: 0,
-    initialPhotos: [
-      {
-        id: 'photo-sm-3',
-        occurrenceId: 'occ-sm-3',
-        url: 'https://images.unsplash.com/photo-1502082553048-f009c37129b9?w=800&auto=format&fit=crop&q=80',
-        caption: 'Tronco bloqueando integralmente o tráfego da Presidente Vargas',
-        uploadedAt: hoursAgo(2),
-        uploadedBySquadName: 'COBOM-SM',
-        stage: 'INICIAL_COBOM'
-      }
-    ],
-    attendances: []
-  },
-  {
-    id: 'occ-sm-4',
-    protocol: 'CBMRS-2026-00498',
-    createdAt: hoursAgo(1),
-    updatedAt: hoursAgo(1),
-    openedBy: 'COBOM - Sd Lutiero',
-    solicitorName: 'Juliana Beatriz Soares',
-    solicitorPhone: '(55) 98765-1234',
-    address: 'Rua Duque de Caxias, 820',
-    neighborhood: 'Medianeira',
-    city: 'Santa Maria',
-    referencePoint: 'Próximo à Basílica da Medianeira',
-    latitude: -29.6912,
-    longitude: -53.8115,
-    description: 'Árvore antiga na calçada com raízes estufando o calçamento e tronco oco com inclinação perigosa.',
-    type: 'VISTORIA_RISCO',
-    dispatchNature: 'Vistoria vegetal: árvore com risco de queda',
-    treeRisk: 'ARVORE_OCA_PODRE',
-    platoonId: 'plat-1',
-    assignedSquadId: 'squad-abt-1238',
-    status: 'ABERTA',
-    urgency: 'MEDIA',
-    isCarriedOver: false,
-    totalAttendancesCount: 0,
-    initialPhotos: [],
-    attendances: []
-  },
-  {
-    id: 'occ-sm-5',
-    protocol: 'CBMRS-2026-00475',
-    createdAt: daysAgo(2),
-    updatedAt: hoursAgo(6),
-    openedBy: 'COBOM - 2º Sgt Giovani',
-    solicitorName: 'Marcos Vinícius Terra',
-    solicitorPhone: '(55) 99344-5566',
-    address: 'Rua Venâncio Aires, 2100',
-    neighborhood: 'Passo d\'Areia',
-    city: 'Santa Maria',
-    referencePoint: 'Esquina com Rua Visconde de Pelotas',
-    latitude: -29.6881,
-    longitude: -53.8193,
-    description: 'Galhos de grande porte quebrados apoiados sobre a cobertura e calha de residência de alvenaria.',
-    type: 'CORTE_ARVORE',
-    dispatchNature: 'Corte de árvore: galhos em telhado de residência',
-    treeRisk: 'QUEDA_SOBRE_RESIDENCIA',
-    platoonId: 'plat-1',
-    assignedSquadId: 'squad-abt-1496',
-    status: 'CONCLUIDA',
-    urgency: 'ALTA',
-    isCarriedOver: true,
-    totalAttendancesCount: 2,
-    lastAttendanceAt: hoursAgo(6),
-    initialPhotos: [],
-    attendances: [
-      {
-        id: 'att-sm-5-1',
-        occurrenceId: 'occ-sm-5',
-        squadId: 'squad-abt-1238',
-        squadName: 'ABT-1238 (1º Pelotão Santa Maria)',
-        callSign: 'ABT-1238',
-        commanderName: '2º SGT SILVA PAZ',
-        shiftInfo: 'Turno de 48h atrás',
-        startedAt: daysAgo(2),
-        finishedAt: daysAgo(2),
-        statusResult: 'PENDENTE',
-        actionTaken: 'Vistoriado o imóvel e feito desbaste inicial. Chuva torrencial impediu trabalho em altura com segurança.',
-        unresolvedReason: 'CONDICAO_CLIMATICA_TEMPESTADE',
-        unresolvedDetails: 'Rajadas de vento de 65km/h e telhado molhado muito escorregadio.',
-        equipmentUsed: ['Motosserra MS-260', 'Corda Estática', 'EPI Florestal'],
-        photos: []
-      },
-      {
-        id: 'att-sm-5-2',
-        occurrenceId: 'occ-sm-5',
-        squadId: 'squad-abt-1496',
-        squadName: 'ABT-1496 (1º Pelotão Santa Maria)',
-        callSign: 'ABT-1496',
-        commanderName: '1º SGT GONÇALVES',
-        shiftInfo: 'Turno Atual',
-        startedAt: hoursAgo(9),
-        finishedAt: hoursAgo(6),
-        statusResult: 'CONCLUIDA',
-        actionTaken: 'Retomada a ocorrência deixada pendente. Efetuado corte minucioso dos galhos em seções com tirolesa e descida suave. Telhado e moradia totalmente desimpedidos.',
-        equipmentUsed: ['Motosserra MS-382', 'Cabos de Tração', 'Roldanas', 'Escada Prolongável'],
-        photos: [
-          {
-            id: 'photo-sm-5-concl',
-            attendanceId: 'att-sm-5-2',
-            occurrenceId: 'occ-sm-5',
-            url: 'https://images.unsplash.com/photo-1588681664899-f142ff2dc9b1?w=800&auto=format&fit=crop&q=80',
-            caption: 'Corte finalizado com sucesso no Passo d\'Areia',
-            uploadedAt: hoursAgo(6),
-            uploadedBySquadName: 'ABT-1496',
-            stage: 'FINALIZACAO'
-          }
-        ]
-      }
-    ]
-  },
-  {
-    id: 'occ-sm-6',
-    protocol: 'CBMRS-2026-00501',
-    createdAt: hoursAgo(3),
-    updatedAt: hoursAgo(3),
-    openedBy: 'COBOM - Sd Douglas',
-    solicitorName: 'Felipe Camargo',
-    solicitorPhone: '(55) 99654-3210',
-    address: 'Av. Walter Jobim, 310',
-    neighborhood: 'Patronato',
-    city: 'Santa Maria',
-    referencePoint: 'Próximo ao Trevo do Castelinho',
-    latitude: -29.6979,
-    longitude: -53.8324,
-    description: 'Galho de acácia quebrou e ocupa meia pista na faixa direita no sentido centro-bairro.',
-    type: 'DESOBSTRUCAO_VIA',
-    dispatchNature: 'Corte de árvore: árvore na via, interdição parcial',
-    treeRisk: 'QUEDA_SOBRE_VIA_PUBLICA',
-    platoonId: 'plat-2',
-    assignedSquadId: 'squad-abc-794',
-    status: 'ABERTA',
-    urgency: 'ALTA',
-    isCarriedOver: false,
-    totalAttendancesCount: 0,
-    initialPhotos: [],
-    attendances: []
-  },
-  {
-    id: 'occ-sm-7',
-    protocol: 'CBMRS-2026-00504',
-    createdAt: hoursAgo(4),
-    updatedAt: hoursAgo(1),
-    openedBy: 'COBOM - 2º Sgt Giovani',
-    solicitorName: 'Dr. Roberto Lacerda',
-    solicitorPhone: '(55) 99111-2233',
-    address: 'Rodovia BR-287, Km 240',
-    neighborhood: 'Pinheiro Machado',
-    city: 'Santa Maria',
-    referencePoint: 'Acesso ao Hospital Regional de Santa Maria',
-    latitude: -29.7045,
-    longitude: -53.8640,
-    description: 'Árvore de grande porte caiu sobre a marginal de acesso das ambulâncias ao Hospital Regional.',
-    type: 'CORTE_ARVORE',
-    dispatchNature: 'Corte de árvore: árvore bloqueando acesso a hospital',
-    treeRisk: 'QUEDA_SOBRE_VIA_PUBLICA',
-    platoonId: 'plat-2',
-    assignedSquadId: 'squad-atp-0561',
-    status: 'EM_ATENDIMENTO',
-    urgency: 'CRITICA',
-    isCarriedOver: false,
-    totalAttendancesCount: 0,
-    initialPhotos: [],
-    attendances: []
-  }
-];
+// Seed de Ocorrências VAZIO para Produção / Teste Real de Campo
+export const SEED_OCCURRENCES: Occurrence[] = [];
 
-// Seed Notifications
-export const SEED_NOTIFICATIONS: AppNotification[] = [
-  {
-    id: 'notif-sm-1',
-    title: '⚠️ Atenção: Ocorrência Pendente Transitada de Turno',
-    message: 'A ocorrência CBMRS-2026-00482 (Av. Rio Branco - Centro) está pendente há 18h aguardando apoio da Equatorial/RGE. Guarnição ABT-1496 deve assumir o caso!',
-    type: 'PENDING_ALERT_12H',
-    occurrenceId: 'occ-sm-1',
-    occurrenceProtocol: 'CBMRS-2026-00482',
-    targetRoles: ['COBOM', 'GUARNICAO', 'PELOTAO'],
-    targetSquadId: 'squad-abt-1496',
-    createdAt: hoursAgo(2),
-    isRead: false,
-  },
-  {
-    id: 'notif-sm-2',
-    title: '🚨 Alerta Crítico: Ocorrência Pendente há mais de 24 horas',
-    message: 'CBMRS-2026-00489 (Av. Roraima - Escola em Camobi) requer apoio especializado e acompanhamento do Comando da 1ª Cia / 4º BBM.',
-    type: 'PENDING_ALERT_24H',
-    occurrenceId: 'occ-sm-2',
-    occurrenceProtocol: 'CBMRS-2026-00489',
-    targetRoles: ['PELOTAO', 'COBOM'],
-    createdAt: hoursAgo(4),
-    isRead: false,
-  },
-  {
-    id: 'notif-sm-3',
-    title: 'Nova Ocorrência Crítica Empenhada',
-    message: 'COBOM-SM despachou ABT-1496 para corte emergencial na Av. Presidente Vargas (Interdição total de via).',
-    type: 'NEW_OCCURRENCE',
-    occurrenceId: 'occ-sm-3',
-    occurrenceProtocol: 'CBMRS-2026-00495',
-    targetRoles: ['GUARNICAO', 'COBOM'],
-    targetSquadId: 'squad-abt-1496',
-    createdAt: hoursAgo(2),
-    isRead: true,
-  }
-];
+// Seed Notifications VAZIO para Produção / Teste Real
+export const SEED_NOTIFICATIONS: AppNotification[] = [];
 
 export const INITIAL_E193_RAW_TEXT = `SANTA MARIA
 4º BBM / 1ª CIA / 2º PEL BS/ P. PINHEIRO MACHADO
@@ -590,12 +267,20 @@ export function getStoredOccurrences(): Occurrence[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.OCCURRENCES);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.OCCURRENCES, JSON.stringify(SEED_OCCURRENCES));
-      return SEED_OCCURRENCES;
+      localStorage.setItem(STORAGE_KEYS.OCCURRENCES, JSON.stringify([]));
+      return [];
     }
-    return JSON.parse(raw);
+    const parsed: Occurrence[] = JSON.parse(raw);
+    // Limpa ocorrências de demonstração antigas (que continham IDs como occ-sm-1 a occ-sm-7)
+    const isMockData = parsed.some(o => o.id.startsWith('occ-sm-') || o.protocol.startsWith('CBMRS-2026-00482') || o.solicitorName === 'Dona Maria Helena Castro');
+    if (isMockData) {
+      const realOnly = parsed.filter(o => !o.id.startsWith('occ-sm-') && o.protocol !== 'CBMRS-2026-00482');
+      localStorage.setItem(STORAGE_KEYS.OCCURRENCES, JSON.stringify(realOnly));
+      return realOnly;
+    }
+    return parsed;
   } catch {
-    return SEED_OCCURRENCES;
+    return [];
   }
 }
 
@@ -685,12 +370,19 @@ export function getStoredNotifications(): AppNotification[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(SEED_NOTIFICATIONS));
-      return SEED_NOTIFICATIONS;
+      localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify([]));
+      return [];
     }
-    return JSON.parse(raw);
+    const parsed: AppNotification[] = JSON.parse(raw);
+    const isMock = parsed.some(n => n.id.startsWith('notif-sm-'));
+    if (isMock) {
+      const realOnly = parsed.filter(n => !n.id.startsWith('notif-sm-'));
+      localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(realOnly));
+      return realOnly;
+    }
+    return parsed;
   } catch {
-    return SEED_NOTIFICATIONS;
+    return [];
   }
 }
 
@@ -1039,6 +731,11 @@ export function createOccurrence(newOcc: Omit<Occurrence, 'id' | 'protocol' | 'c
   list.unshift(fullOccurrence);
   saveOccurrences(list);
 
+  // Sincroniza com Supabase em segundo plano
+  insertOccurrenceToSupabase(fullOccurrence).catch(err => {
+    console.warn('Sincronização assíncrona da ocorrência com Supabase:', err);
+  });
+
   // Dispara Notificação automática
   const squad = getStoredSquads().find(s => s.id === newOcc.assignedSquadId);
   const notif: AppNotification = {
@@ -1073,6 +770,11 @@ export function updateOccurrence(updated: Occurrence): void {
       updatedAt: new Date().toISOString()
     };
     saveOccurrences(list);
+
+    // Sincroniza com Supabase
+    updateOccurrenceInSupabase(list[index]).catch(err => {
+      console.warn('Erro ao sincronizar atualização no Supabase:', err);
+    });
   }
 }
 
@@ -1112,6 +814,11 @@ export function recordAttendance(
 
   list[index] = updatedOcc;
   saveOccurrences(list);
+
+  // Sincroniza Atendimento no Supabase
+  recordAttendanceInSupabase(occurrenceId, fullRecord, updatedOcc).catch(err => {
+    console.warn('Erro ao persistir atendimento no Supabase:', err);
+  });
 
   // Geração de Notificações
   const notifs = getStoredNotifications();
@@ -1177,6 +884,11 @@ export function setSquadInAttendance(occurrenceId: string, squadId: string): Occ
   list[index] = updatedOcc;
   saveOccurrences(list);
 
+  // Sincroniza com Supabase
+  updateOccurrenceInSupabase(updatedOcc).catch(err => {
+    console.warn('Erro ao atualizar status para EM_ATENDIMENTO no Supabase:', err);
+  });
+
   const notifs = getStoredNotifications();
   notifs.unshift({
     id: `notif-${Date.now()}`,
@@ -1192,6 +904,22 @@ export function setSquadInAttendance(occurrenceId: string, squadId: string): Occ
   saveNotifications(notifs);
 
   return updatedOcc;
+}
+
+/**
+ * Sincroniza as ocorrências do Supabase para o cache local
+ */
+export async function syncOccurrencesFromSupabase(): Promise<Occurrence[]> {
+  try {
+    const remoteList = await fetchOccurrencesFromSupabase();
+    if (remoteList && remoteList.length > 0) {
+      saveOccurrences(remoteList);
+      return remoteList;
+    }
+  } catch (e) {
+    console.warn('Não foi possível buscar do Supabase, utilizando cache local:', e);
+  }
+  return getStoredOccurrences();
 }
 
 /**

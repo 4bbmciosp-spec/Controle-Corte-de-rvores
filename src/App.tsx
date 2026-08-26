@@ -22,13 +22,15 @@ import {
   saveNotifications,
   resetToSeedData,
   setSquadInAttendance,
-  getHoursPending
+  getHoursPending,
+  syncOccurrencesFromSupabase
 } from './services/storageService';
 import { 
   getCurrentMilitar, 
   logoutMilitar, 
   MilitarUser 
 } from './services/authService';
+import { subscribeToOccurrencesRealtime } from './services/supabaseDataService';
 
 // Components
 import { Header } from './components/Header';
@@ -109,7 +111,7 @@ export default function App() {
     initAuth();
   }, []);
 
-  // Initial Load
+  // Initial Load & Supabase Remote Sync
   const loadAllData = useCallback(() => {
     const loadedOccs = getStoredOccurrences();
     const loadedPlats = getStoredPlatoons();
@@ -124,10 +126,30 @@ export default function App() {
     setUsers(loadedUsers);
     setCurrentUser(loadedUser);
     setNotifications(loadedNotifs);
+
+    // Consulta e sincroniza com o banco Supabase em segundo plano
+    syncOccurrencesFromSupabase().then(syncedOccs => {
+      if (syncedOccs && syncedOccs.length > 0) {
+        setOccurrences(syncedOccs);
+      }
+    });
   }, []);
 
   useEffect(() => {
     loadAllData();
+
+    // Inscrição Realtime no Supabase para sincronização instantânea
+    const unsubscribe = subscribeToOccurrencesRealtime(() => {
+      syncOccurrencesFromSupabase().then(syncedOccs => {
+        if (syncedOccs && syncedOccs.length > 0) {
+          setOccurrences(syncedOccs);
+        }
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [loadAllData]);
 
   // Periodic Check for 12h/24h recurring alerts for pending unresolved tree incidents
