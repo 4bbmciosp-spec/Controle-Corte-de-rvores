@@ -305,3 +305,182 @@ export const getCurrentMilitar = async (): Promise<MilitarUser | null> => {
     return null;
   }
 };
+
+const DEFAULT_ROSTER_MILITARES: MilitarUser[] = [
+  { id: 'mil-3177360', matricula: '3177360', nome_guerra: 'LUTIERO', posto_graduacao: 'SD', perfil: 'COBOM', pelotao_id: 'plat-cobom', funcao_na_guarnicao: 'OPERADOR COBOM', is_comandante: false, senha_temporaria: true, email: '3177360@4bbm.cbm' },
+  { id: 'mil-3156079', matricula: '3156079', nome_guerra: 'GIOVANI', posto_graduacao: '2º SGT', perfil: 'COBOM', pelotao_id: 'plat-cobom', funcao_na_guarnicao: 'OPERADOR COBOM', is_comandante: false, senha_temporaria: true, email: '3156079@4bbm.cbm' },
+  { id: 'mil-3137341', matricula: '3137341', nome_guerra: 'DOUGLAS', posto_graduacao: 'SD', perfil: 'COBOM', pelotao_id: 'plat-cobom', funcao_na_guarnicao: 'OPERADOR COBOM', is_comandante: false, senha_temporaria: true, email: '3137341@4bbm.cbm' },
+  { id: 'mil-2498110', matricula: '2498110', nome_guerra: 'MEDEIROS', posto_graduacao: 'CAP QOEM', perfil: 'COBOM', pelotao_id: 'plat-1', funcao_na_guarnicao: 'COMANDANTE 1ª CIA / 4º BBM', is_comandante: true, senha_temporaria: true, email: '2498110@4bbm.cbm' },
+  { id: 'mil-2693038', matricula: '2693038', nome_guerra: 'GONÇALVES', posto_graduacao: '1º SGT', perfil: 'GUARNICAO', pelotao_id: 'plat-1', guarnicao_id: 'squad-abt-1496', funcao_na_guarnicao: 'COMANDANTE DE GUARNIÇÃO', is_comandante: true, senha_temporaria: true, email: '2693038@4bbm.cbm' },
+  { id: 'mil-3140687', matricula: '3140687', nome_guerra: 'EVANGELHO', posto_graduacao: 'SD', perfil: 'GUARNICAO', pelotao_id: 'plat-1', guarnicao_id: 'squad-abt-1496', funcao_na_guarnicao: 'CHEFE DE LINHA DIREITA', is_comandante: false, senha_temporaria: true, email: '3140687@4bbm.cbm' },
+  { id: 'mil-3706362', matricula: '3706362', nome_guerra: 'GASTÃO', posto_graduacao: 'SD', perfil: 'GUARNICAO', pelotao_id: 'plat-1', guarnicao_id: 'squad-abt-1496', funcao_na_guarnicao: 'AUXILIAR DE LINHA DIREITA', is_comandante: false, senha_temporaria: true, email: '3706362@4bbm.cbm' },
+  { id: 'mil-4388240', matricula: '4388240', nome_guerra: 'VIEIRA', posto_graduacao: 'SD', perfil: 'GUARNICAO', pelotao_id: 'plat-1', guarnicao_id: 'squad-abt-1496', funcao_na_guarnicao: 'COV / OPERADOR / CONDUTOR', is_comandante: false, senha_temporaria: true, email: '4388240@4bbm.cbm' },
+  { id: 'mil-2682125', matricula: '2682125', nome_guerra: 'SILVA PAZ', posto_graduacao: '2º SGT', perfil: 'GUARNICAO', pelotao_id: 'plat-1', guarnicao_id: 'squad-abt-1238', funcao_na_guarnicao: 'COV / OPERADOR / CONDUTOR', is_comandante: false, senha_temporaria: true, email: '2682125@4bbm.cbm' },
+  { id: 'mil-2877384', matricula: '2877384', nome_guerra: 'SIQUEIRA', posto_graduacao: '2º SGT', perfil: 'GUARNICAO', pelotao_id: 'plat-1', guarnicao_id: 'squad-abt-1238', funcao_na_guarnicao: 'COV / OPERADOR / CONDUTOR', is_comandante: false, senha_temporaria: true, email: '2877384@4bbm.cbm' },
+  { id: 'mil-2519038', matricula: '2519038', nome_guerra: 'SCHUSTER', posto_graduacao: '1º SGT', perfil: 'GUARNICAO', pelotao_id: 'plat-3', guarnicao_id: 'squad-abt-534', funcao_na_guarnicao: 'COV / OPERADOR / CONDUTOR', is_comandante: false, senha_temporaria: true, email: '2519038@4bbm.cbm' },
+  { id: 'mil-3141551', matricula: '3141551', nome_guerra: 'TATIELI', posto_graduacao: '1º SGT', perfil: 'GUARNICAO', pelotao_id: 'plat-3', guarnicao_id: 'squad-abt-534', funcao_na_guarnicao: 'CHEFE DE LINHA DIREITA', is_comandante: false, senha_temporaria: true, email: '3141551@4bbm.cbm' },
+  { id: 'mil-3705862', matricula: '3705862', nome_guerra: 'REQUIA', posto_graduacao: 'SD', perfil: 'GUARNICAO', pelotao_id: 'plat-3', guarnicao_id: 'squad-abt-534', funcao_na_guarnicao: 'CHEFE DE LINHA ESQUERDA', is_comandante: false, senha_temporaria: true, email: '3705862@4bbm.cbm' },
+  { id: 'mil-2615690', matricula: '2615690', nome_guerra: 'BRUM', posto_graduacao: '1º SGT', perfil: 'GUARNICAO', pelotao_id: 'plat-2', guarnicao_id: 'squad-abc-794', funcao_na_guarnicao: 'CINOTÉCNICO', is_comandante: true, senha_temporaria: true, email: '2615690@4bbm.cbm' },
+  { id: 'mil-2685094', matricula: '2685094', nome_guerra: 'MACHADO', posto_graduacao: '2º SGT', perfil: 'GUARNICAO', pelotao_id: 'plat-2', guarnicao_id: 'squad-abc-794', funcao_na_guarnicao: 'CINOTÉCNICO', is_comandante: false, senha_temporaria: true, email: '2685094@4bbm.cbm' },
+  { id: 'mil-4674260', matricula: '4674260', nome_guerra: 'ULLRICH', posto_graduacao: 'SD', perfil: 'GUARNICAO', pelotao_id: 'plat-2', guarnicao_id: 'squad-abc-794', funcao_na_guarnicao: 'CINOTÉCNICO', is_comandante: false, senha_temporaria: true, email: '4674260@4bbm.cbm' },
+  { id: 'mil-3155331', matricula: '3155331', nome_guerra: 'VASCONCELLOS', posto_graduacao: '2º SGT', perfil: 'GUARNICAO', pelotao_id: 'plat-2', guarnicao_id: 'squad-atp-0561', funcao_na_guarnicao: 'MERGULHADOR', is_comandante: false, senha_temporaria: true, email: '3155331@4bbm.cbm' },
+];
+
+const STORAGE_MILITARES_KEY = 'cbmrs_militares_roster_v3';
+
+/**
+ * Busca todos os militares cadastrados (Supabase com fallback Local)
+ */
+export const getAllMilitares = async (): Promise<MilitarUser[]> => {
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('militares')
+        .select('*')
+        .order('nome_guerra', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        const mapped: MilitarUser[] = data.map(row => ({
+          id: row.id || `mil-${row.matricula}`,
+          matricula: row.matricula,
+          nome_guerra: row.nome_guerra,
+          posto_graduacao: row.posto_graduacao,
+          perfil: (row.perfil || 'GUARNICAO') as 'COBOM' | 'GUARNICAO',
+          pelotao_id: row.pelotao_id,
+          guarnicao_id: row.guarnicao_id,
+          funcao_na_guarnicao: row.funcao_na_guarnicao,
+          is_comandante: Boolean(row.is_comandante),
+          senha_temporaria: Boolean(row.senha_temporaria),
+          email: `${row.matricula}@4bbm.cbm`,
+        }));
+        localStorage.setItem(STORAGE_MILITARES_KEY, JSON.stringify(mapped));
+        return mapped;
+      }
+    } catch (e) {
+      console.warn('Aviso ao consultar lista de militares no Supabase:', e);
+    }
+  }
+
+  // Fallback Local
+  try {
+    const raw = localStorage.getItem(STORAGE_MILITARES_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {
+    // ignore
+  }
+
+  localStorage.setItem(STORAGE_MILITARES_KEY, JSON.stringify(DEFAULT_ROSTER_MILITARES));
+  return DEFAULT_ROSTER_MILITARES;
+};
+
+/**
+ * Salva ou Atualiza um militar (Exclusivo COBOM)
+ */
+export const saveOrUpdateMilitar = async (militar: MilitarUser): Promise<boolean> => {
+  const cleanMatricula = militar.matricula.replace(/\D/g, '').trim();
+  if (!cleanMatricula) return false;
+
+  const fullMilitar: MilitarUser = {
+    ...militar,
+    matricula: cleanMatricula,
+    email: `${cleanMatricula}@4bbm.cbm`,
+    id: militar.id || `mil-${cleanMatricula}`
+  };
+
+  // 1. Atualizar Local Storage
+  const currentList = await getAllMilitares();
+  const index = currentList.findIndex(m => m.matricula === cleanMatricula);
+  if (index >= 0) {
+    currentList[index] = fullMilitar;
+  } else {
+    currentList.push(fullMilitar);
+  }
+  localStorage.setItem(STORAGE_MILITARES_KEY, JSON.stringify(currentList));
+
+  // 2. Atualizar no Supabase
+  if (isSupabaseConfigured()) {
+    try {
+      const payload = {
+        matricula: cleanMatricula,
+        nome_guerra: fullMilitar.nome_guerra,
+        posto_graduacao: fullMilitar.posto_graduacao,
+        perfil: fullMilitar.perfil,
+        pelotao_id: fullMilitar.pelotao_id || null,
+        guarnicao_id: fullMilitar.guarnicao_id || null,
+        funcao_na_guarnicao: fullMilitar.funcao_na_guarnicao || null,
+        is_comandante: Boolean(fullMilitar.is_comandante),
+        senha_temporaria: Boolean(fullMilitar.senha_temporaria),
+      };
+
+      await supabase
+        .from('militares')
+        .upsert(payload, { onConflict: 'matricula' });
+    } catch (e) {
+      console.warn('Erro ao salvar militar no Supabase:', e);
+    }
+  }
+
+  return true;
+};
+
+/**
+ * Exclui um militar (Exclusivo COBOM)
+ */
+export const deleteMilitar = async (matricula: string): Promise<boolean> => {
+  const cleanMatricula = matricula.replace(/\D/g, '').trim();
+  if (!cleanMatricula) return false;
+
+  // 1. Local Storage
+  const currentList = await getAllMilitares();
+  const filtered = currentList.filter(m => m.matricula !== cleanMatricula);
+  localStorage.setItem(STORAGE_MILITARES_KEY, JSON.stringify(filtered));
+  localStorage.removeItem(`cbmrs_pwd_${cleanMatricula}`);
+
+  // 2. Supabase
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase
+        .from('militares')
+        .delete()
+        .eq('matricula', cleanMatricula);
+    } catch (e) {
+      console.warn('Erro ao excluir militar no Supabase:', e);
+    }
+  }
+
+  return true;
+};
+
+/**
+ * Reseta a senha de um militar para a padrão ({4_ultimos_digitos}cbm) e força troca no próximo login
+ */
+export const resetMilitarPassword = async (matricula: string): Promise<boolean> => {
+  const cleanMatricula = matricula.replace(/\D/g, '').trim();
+  if (!cleanMatricula) return false;
+
+  localStorage.removeItem(`cbmrs_pwd_${cleanMatricula}`);
+
+  // Marca no roster local
+  const currentList = await getAllMilitares();
+  const mIndex = currentList.findIndex(m => m.matricula === cleanMatricula);
+  if (mIndex >= 0) {
+    currentList[mIndex].senha_temporaria = true;
+    localStorage.setItem(STORAGE_MILITARES_KEY, JSON.stringify(currentList));
+  }
+
+  // Marca no Supabase
+  if (isSupabaseConfigured()) {
+    try {
+      await supabase
+        .from('militares')
+        .update({ senha_temporaria: true })
+        .eq('matricula', cleanMatricula);
+    } catch (e) {
+      console.warn('Erro ao resetar senha no Supabase:', e);
+    }
+  }
+
+  return true;
+};

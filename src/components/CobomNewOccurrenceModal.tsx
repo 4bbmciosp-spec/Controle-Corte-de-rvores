@@ -50,6 +50,7 @@ interface CobomNewOccurrenceModalProps {
   currentUser: User;
   onClose: () => void;
   onSaved: (occ: Occurrence) => void;
+  onDelete?: (occurrenceId: string) => void;
 }
 
 export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = ({
@@ -59,6 +60,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
   currentUser,
   onClose,
   onSaved,
+  onDelete,
 }) => {
   const isEditing = !!initialOccurrence;
 
@@ -74,6 +76,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
   const [neighborhood, setNeighborhood] = useState(initialOccurrence?.neighborhood || '');
   const [city, setCity] = useState(initialOccurrence?.city || 'Santa Maria');
   const [referencePoint, setReferencePoint] = useState(initialOccurrence?.referencePoint || '');
+  const [status, setStatus] = useState<Occurrence['status']>(initialOccurrence?.status || 'PENDENTE');
   
   // Santa Maria Coordinates default: -29.6842, -53.8069
   const [latitude, setLatitude] = useState(initialOccurrence?.latitude || -29.6842);
@@ -326,6 +329,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
           type,
           treeRisk,
           urgency,
+          status,
           platoonId,
           assignedSquadId,
           initialPhotos: photos,
@@ -746,6 +750,26 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
               </div>
             </div>
 
+            {/* Alteração de Status pelo COBOM (quando editando) */}
+            {isEditing && (
+              <div className="pt-2 border-t border-slate-100">
+                <label className="block text-slate-700 font-extrabold mb-1 text-xs">
+                  Situação / Status da Ocorrência (Controle COBOM)
+                </label>
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as Occurrence['status'])}
+                  className="w-full bg-amber-50 border border-amber-300 rounded-lg px-3 py-2 text-slate-900 font-bold text-xs"
+                >
+                  <option value="ABERTA">🚨 ABERTA (Despachada / Aguardando atendimento)</option>
+                  <option value="EM_ATENDIMENTO">🚒 EM ATENDIMENTO (Guarnição no local)</option>
+                  <option value="PENDENTE">⚠️ PENDENTE (Atendimento não concluído / Transita de turno)</option>
+                  <option value="CONCLUIDA">✅ CONCLUÍDA (Finalizada com sucesso)</option>
+                  <option value="CANCELADA">❌ CANCELADA (Cancelada / Trote / Vistoria nula)</option>
+                </select>
+              </div>
+            )}
+
             {/* Painel Tático da Guarnição Empenhada: VTR + PelBM + Comandante + Efetivo */}
             {(() => {
               const selectedSquad = squads.find(s => s.id === assignedSquadId);
@@ -904,31 +928,51 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
           </div>
 
           {/* Form Actions */}
-          <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-5 py-2.5 bg-red-800 hover:bg-red-700 rounded-lg text-xs font-extrabold text-white flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Registrando no 4º BBM...</span>
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4" />
-                  <span>{isEditing ? 'Salvar Alterações' : 'Despachar Ocorrência 193'}</span>
-                </>
+          <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-3">
+            <div>
+              {isEditing && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (initialOccurrence && confirm(`Atenção COBOM: Deseja realmente excluir a ocorrência ${initialOccurrence.protocol}? Esta ação removerá a ocorrência e todos os atendimentos do banco.`)) {
+                      onDelete(initialOccurrence.id);
+                      onClose();
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  <span>Excluir Ocorrência (COBOM)</span>
+                </button>
               )}
-            </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-5 py-2.5 bg-red-800 hover:bg-red-700 rounded-lg text-xs font-extrabold text-white flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Registrando no 4º BBM...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>{isEditing ? 'Salvar Alterações' : 'Despachar Ocorrência 193'}</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </form>
 

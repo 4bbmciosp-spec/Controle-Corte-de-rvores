@@ -17,7 +17,8 @@ import {
   FileSpreadsheet,
   Layers,
   BookOpen,
-  Printer
+  Printer,
+  Users
 } from 'lucide-react';
 import { exportDatabaseBackup } from '../services/storageService';
 import { MilitarUser } from '../services/authService';
@@ -37,6 +38,7 @@ interface HeaderProps {
   onOpenSquadImport: () => void;
   onOpenPopViewer: () => void;
   onOpenDetailedReport: () => void;
+  onOpenMilitaryManagement?: () => void;
   onResetData: () => void;
   onLogout?: () => void;
 }
@@ -55,6 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSquadImport,
   onOpenPopViewer,
   onOpenDetailedReport,
+  onOpenMilitaryManagement,
   onResetData,
   onLogout,
 }) => {
@@ -137,13 +140,26 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Right Actions & Profile Switcher */}
         <div className="flex items-center gap-2">
 
+          {/* Gestão de Efetivo & Militares (Exclusivo COBOM) */}
+          {currentUser.role === 'COBOM' && onOpenMilitaryManagement && (
+            <button
+              onClick={onOpenMilitaryManagement}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-lg shadow-sm transition-all cursor-pointer border border-amber-300"
+              title="Gestão de Militares & Efetivo do 4º BBM (Editar dados, senhas, cadastros)"
+            >
+              <Users className="w-3.5 h-3.5 text-slate-950" />
+              <span className="hidden lg:inline">Militares & Efetivo</span>
+              <span className="lg:hidden">Militares</span>
+            </button>
+          )}
+
           {/* POP Corte de Árvore (Consulta Oficial & PDF) */}
           <button
             onClick={onOpenPopViewer}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold rounded-lg shadow-sm transition-all cursor-pointer border border-amber-300"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-red-900/90 hover:bg-red-950 text-red-100 text-xs font-semibold rounded-lg border border-red-700/70 transition-colors cursor-pointer"
             title="Procedimento Operacional Padrão de Corte de Árvore CBMRS (Consultar / Salvar PDF)"
           >
-            <BookOpen className="w-3.5 h-3.5 text-slate-950" />
+            <BookOpen className="w-3.5 h-3.5 text-amber-300" />
             <span className="hidden xl:inline">POP Corte Árvore (PDF)</span>
             <span className="xl:hidden">POP</span>
           </button>
@@ -279,6 +295,19 @@ export const Header: React.FC<HeaderProps> = ({
                   })}
 
                   <div className="pt-2 border-t border-slate-100 space-y-1">
+                    {currentUser.role === 'COBOM' && onOpenMilitaryManagement && (
+                      <button
+                        onClick={() => {
+                          onOpenMilitaryManagement();
+                          setShowProfileMenu(false);
+                        }}
+                        className="w-full text-left px-2 py-1.5 text-xs text-amber-900 bg-amber-50 hover:bg-amber-100 rounded flex items-center gap-1.5 cursor-pointer font-bold border border-amber-200"
+                      >
+                        <Users className="w-3.5 h-3.5 text-amber-800" />
+                        <span>Gestão de Militares & Efetivo</span>
+                      </button>
+                    )}
+
                     <button
                       onClick={() => {
                         onOpenSquadImport();

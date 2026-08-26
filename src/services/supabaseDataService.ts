@@ -247,6 +247,36 @@ export async function uploadPhotoToSupabaseStorage(
 }
 
 /**
+ * Exclui uma ocorrência no Supabase (e seus atendimentos cascateados)
+ */
+export async function deleteOccurrenceFromSupabase(occurrenceId: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false;
+
+  try {
+    // 1. Remove atendimentos vinculados
+    await supabase
+      .from('atendimentos')
+      .delete()
+      .eq('ocorrencia_id', occurrenceId);
+
+    // 2. Remove ocorrência
+    const { error } = await supabase
+      .from('ocorrencias')
+      .delete()
+      .eq('id', occurrenceId);
+
+    if (error) {
+      console.warn('Erro ao excluir ocorrência no Supabase:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Falha ao excluir ocorrência no Supabase:', err);
+    return false;
+  }
+}
+
+/**
  * Inscrição Realtime no Supabase para atualizações instantâneas entre COBOM e Guarnições
  */
 export function subscribeToOccurrencesRealtime(onUpdate: () => void) {

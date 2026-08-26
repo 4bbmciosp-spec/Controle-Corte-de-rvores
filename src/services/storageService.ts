@@ -12,6 +12,7 @@ import {
 import {
   insertOccurrenceToSupabase,
   updateOccurrenceInSupabase,
+  deleteOccurrenceFromSupabase,
   recordAttendanceInSupabase,
   fetchOccurrencesFromSupabase
 } from './supabaseDataService';
@@ -776,6 +777,23 @@ export function updateOccurrence(updated: Occurrence): void {
       console.warn('Erro ao sincronizar atualização no Supabase:', err);
     });
   }
+}
+
+/**
+ * Exclusão definitiva de ocorrência (Exclusivo COBOM para correções/duplicidades)
+ */
+export function deleteOccurrence(occurrenceId: string): void {
+  const list = getStoredOccurrences().filter(o => o.id !== occurrenceId);
+  saveOccurrences(list);
+
+  // Remove notificações associadas
+  const notifs = getStoredNotifications().filter(n => n.occurrenceId !== occurrenceId);
+  saveNotifications(notifs);
+
+  // Sincroniza exclusão no Supabase
+  deleteOccurrenceFromSupabase(occurrenceId).catch(err => {
+    console.warn('Erro ao excluir ocorrência no Supabase:', err);
+  });
 }
 
 /**

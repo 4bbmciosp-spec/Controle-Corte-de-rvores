@@ -23,7 +23,8 @@ import {
   resetToSeedData,
   setSquadInAttendance,
   getHoursPending,
-  syncOccurrencesFromSupabase
+  syncOccurrencesFromSupabase,
+  deleteOccurrence
 } from './services/storageService';
 import { 
   getCurrentMilitar, 
@@ -45,6 +46,7 @@ import { ShiftHandoverModal } from './components/ShiftHandoverModal';
 import { NotificationsDrawer } from './components/NotificationsDrawer';
 import { PopViewerModal } from './components/PopViewerModal';
 import { DetailedReportPrintModal } from './components/DetailedReportPrintModal';
+import { MilitaryManagementModal } from './components/MilitaryManagementModal';
 import { LoginModal } from './components/LoginModal';
 import { ForcePasswordChangeModal } from './components/ForcePasswordChangeModal';
 
@@ -89,6 +91,7 @@ export default function App() {
   const [isSquadImportOpen, setIsSquadImportOpen] = useState(false);
   const [isPopViewerOpen, setIsPopViewerOpen] = useState(false);
   const [isDetailedReportOpen, setIsDetailedReportOpen] = useState(false);
+  const [isMilitaryManagementOpen, setIsMilitaryManagementOpen] = useState(false);
 
   // Status Filter from Dashboard Cards
   const [activeStatusFilter, setActiveStatusFilter] = useState<string>('TODOS');
@@ -254,6 +257,18 @@ export default function App() {
     setIsNewOccurrenceOpen(false);
   };
 
+  // Delete Occurrence (Exclusive for COBOM)
+  const handleDeleteOccurrence = (occId: string) => {
+    deleteOccurrence(occId);
+    loadAllData();
+    if (detailOccurrence?.id === occId) {
+      setDetailOccurrence(null);
+    }
+    if (editOccurrence?.id === occId) {
+      setEditOccurrence(null);
+    }
+  };
+
   // Start Attendance in Field
   const handleStartAttendance = (occ: Occurrence) => {
     if (!currentUser?.squadId) {
@@ -341,6 +356,7 @@ export default function App() {
         onOpenSquadImport={() => setIsSquadImportOpen(true)}
         onOpenPopViewer={() => setIsPopViewerOpen(true)}
         onOpenDetailedReport={() => setIsDetailedReportOpen(true)}
+        onOpenMilitaryManagement={() => setIsMilitaryManagementOpen(true)}
         onResetData={handleResetData}
         onLogout={handleLogout}
       />
@@ -404,6 +420,8 @@ export default function App() {
               onSelectOccurrence={(occ) => setDetailOccurrence(occ)}
               onOpenAttendanceForm={(occ) => setAttendanceOccurrence(occ)}
               onStartAttendance={handleStartAttendance}
+              onEditOccurrence={(occ) => setEditOccurrence(occ)}
+              onDeleteOccurrence={handleDeleteOccurrence}
             />
           </>
         )}
@@ -441,6 +459,7 @@ export default function App() {
             setDetailOccurrence(null);
             setEditOccurrence(occ);
           }}
+          onDeleteOccurrence={handleDeleteOccurrence}
           onUpdateOccurrence={(updated) => {
             setDetailOccurrence(updated);
             loadAllData();
@@ -474,6 +493,7 @@ export default function App() {
             setIsNewOccurrenceOpen(false);
             setEditOccurrence(null);
           }}
+          onDelete={handleDeleteOccurrence}
           onSaved={(savedOcc) => {
             setIsNewOccurrenceOpen(false);
             setEditOccurrence(null);
@@ -540,6 +560,19 @@ export default function App() {
           squads={squads}
           platoons={platoons}
           onClose={() => setIsDetailedReportOpen(false)}
+        />
+      )}
+
+      {/* 9. Gestão de Militares & Efetivo (Exclusivo COBOM) */}
+      {isMilitaryManagementOpen && currentUser.role === 'COBOM' && (
+        <MilitaryManagementModal
+          platoons={platoons}
+          squads={squads}
+          currentUser={currentUser}
+          onClose={() => setIsMilitaryManagementOpen(false)}
+          onMilitaryUpdated={() => {
+            loadAllData();
+          }}
         />
       )}
 

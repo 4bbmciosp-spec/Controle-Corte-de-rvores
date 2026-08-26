@@ -20,6 +20,7 @@ import {
   ShieldAlert, 
   Play, 
   Edit3, 
+  Trash2,
   CheckCheck,
   ChevronRight,
   Sparkles,
@@ -39,6 +40,7 @@ interface OccurrenceDetailModalProps {
   onOpenAttendanceForm: (occ: Occurrence) => void;
   onOpenEditForm: (occ: Occurrence) => void;
   onUpdateOccurrence: (occ: Occurrence) => void;
+  onDeleteOccurrence?: (occurrenceId: string) => void;
 }
 
 export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
@@ -50,6 +52,7 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   onOpenAttendanceForm,
   onOpenEditForm,
   onUpdateOccurrence,
+  onDeleteOccurrence,
 }) => {
   const [selectedPhoto, setSelectedPhoto] = useState<OccurrencePhoto | null>(null);
 
@@ -68,6 +71,15 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
     if (!currentUser.squadId) return;
     const updated = setSquadInAttendance(occurrence.id, currentUser.squadId);
     onUpdateOccurrence(updated);
+  };
+
+  const handleDelete = () => {
+    if (confirm(`Atenção COBOM: Deseja realmente excluir permanentemente a ocorrência ${occurrence.protocol}?\n\nEsta ação removerá todos os registros e atendimentos vinculados do banco de dados.`)) {
+      if (onDeleteOccurrence) {
+        onDeleteOccurrence(occurrence.id);
+      }
+      onClose();
+    }
   };
 
   const handlePrint = () => {
@@ -152,13 +164,23 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
 
             <div className="flex items-center gap-2 print:hidden">
               {isCobom && (
-                <button
-                  onClick={() => onOpenEditForm(occurrence)}
-                  className="px-2.5 py-1.5 bg-red-900/90 hover:bg-red-950 text-white text-xs font-bold rounded-lg border border-red-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  <span>Editar COBOM</span>
-                </button>
+                <>
+                  <button
+                    onClick={() => onOpenEditForm(occurrence)}
+                    className="px-2.5 py-1.5 bg-red-900/90 hover:bg-red-950 text-white text-xs font-bold rounded-lg border border-red-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>Editar COBOM</span>
+                  </button>
+                  <button
+                    onClick={handleDelete}
+                    className="px-2.5 py-1.5 bg-rose-950/80 hover:bg-rose-900 text-rose-200 hover:text-white text-xs font-bold rounded-lg border border-rose-800/80 flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                    title="Excluir ocorrência cadastrada incorretamente ou duplicada"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-300" />
+                    <span>Excluir</span>
+                  </button>
+                </>
               )}
 
               <button

@@ -31,6 +31,8 @@ interface OccurrenceListProps {
   onSelectOccurrence: (occ: Occurrence) => void;
   onOpenAttendanceForm: (occ: Occurrence) => void;
   onStartAttendance: (occ: Occurrence) => void;
+  onEditOccurrence?: (occ: Occurrence) => void;
+  onDeleteOccurrence?: (occurrenceId: string) => void;
 }
 
 // Calculate criticality score from highest to lowest
@@ -102,6 +104,8 @@ export const OccurrenceList: React.FC<OccurrenceListProps> = ({
   onSelectOccurrence,
   onOpenAttendanceForm,
   onStartAttendance,
+  onEditOccurrence,
+  onDeleteOccurrence,
 }) => {
   // Main Tab: 'ACTIVE' (Em Aberto / Operacionais) vs 'ARCHIVE' (Concluídas / Arquivadas)
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'ARCHIVE'>('ACTIVE');
@@ -534,6 +538,8 @@ export const OccurrenceList: React.FC<OccurrenceListProps> = ({
                   onSelect={onSelectOccurrence}
                   onOpenAttendanceForm={onOpenAttendanceForm}
                   onStartAttendance={onStartAttendance}
+                  onEdit={onEditOccurrence}
+                  onDelete={onDeleteOccurrence}
                 />
               ))}
             </div>
