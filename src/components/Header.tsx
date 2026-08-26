@@ -20,9 +20,12 @@ import {
   Printer
 } from 'lucide-react';
 import { exportDatabaseBackup } from '../services/storageService';
+import { MilitarUser } from '../services/authService';
+import { LogOut, User as UserIcon } from 'lucide-react';
 
 interface HeaderProps {
   currentUser: User;
+  authenticatedMilitar?: MilitarUser | null;
   allUsers: User[];
   unreadNotificationsCount: number;
   activeMainTab: 'OPERATIONAL' | 'REPORTS';
@@ -35,10 +38,12 @@ interface HeaderProps {
   onOpenPopViewer: () => void;
   onOpenDetailedReport: () => void;
   onResetData: () => void;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
+  authenticatedMilitar,
   allUsers,
   unreadNotificationsCount,
   activeMainTab,
@@ -51,6 +56,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenPopViewer,
   onOpenDetailedReport,
   onResetData,
+  onLogout,
 }) => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
@@ -198,113 +204,144 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* Profile Switcher Dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setShowProfileMenu(!showProfileMenu)}
-              className="flex items-center gap-2 p-1.5 sm:px-2.5 sm:py-1.5 bg-red-900/90 hover:bg-red-950 rounded-lg border border-red-700/70 text-left transition-all cursor-pointer"
-            >
-              <div className="w-6 h-6 rounded bg-white text-red-900 flex items-center justify-center font-bold text-xs shadow-sm font-mono">
-                {currentUser.role === 'COBOM' ? '193' : currentUser.name.match(/\d+/)?.[0] || 'VTR'}
-              </div>
-              <div className="hidden sm:block">
-                <div className="text-xs font-bold text-white line-clamp-1">
-                  {currentUser.name}
-                </div>
-                <div className="text-[10px] text-red-200">
-                  {currentUser.rank}
-                </div>
-              </div>
-              <ChevronDown className="w-3.5 h-3.5 text-red-300 hidden sm:block" />
-            </button>
-
-            {/* Profile Dropdown Menu */}
-            {showProfileMenu && (
-              <div 
-                className="absolute right-0 mt-2 w-72 bg-white text-slate-800 border border-slate-200 rounded-xl shadow-2xl p-2 z-[1300] space-y-1 animate-fadeIn"
-                onMouseLeave={() => setShowProfileMenu(false)}
+            {/* Profile Switcher / Authenticated Militar Info */}
+            <div className="relative">
+              <button
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className="flex items-center gap-2 p-1.5 sm:px-2.5 sm:py-1.5 bg-red-900/90 hover:bg-red-950 rounded-lg border border-red-700/70 text-left transition-all cursor-pointer"
               >
-                <div className="px-3 py-1.5 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Posto / Viatura Operacional em Serviço:
+                <div className="w-6 h-6 rounded bg-white text-red-900 flex items-center justify-center font-bold text-xs shadow-sm font-mono">
+                  {authenticatedMilitar?.posto_graduacao || (currentUser.role === 'COBOM' ? '193' : 'VTR')}
                 </div>
-
-                {allUsers.map((u) => {
-                  const isSelected = u.id === currentUser.id;
-                  return (
-                    <button
-                      key={u.id}
-                      onClick={() => {
-                        onSelectUser(u);
-                        setShowProfileMenu(false);
-                      }}
-                      className={`w-full text-left p-2 rounded-lg text-xs transition-colors flex items-center justify-between cursor-pointer ${
-                        isSelected 
-                          ? 'bg-red-50 border border-red-200 text-red-900 font-bold' 
-                          : 'hover:bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-semibold text-slate-900">{u.name}</div>
-                        <div className="text-[10px] text-slate-500">{u.rank}</div>
-                      </div>
-                      <div>
-                        {getRoleBadge(u.role)}
-                      </div>
-                    </button>
-                  );
-                })}
-
-                <div className="pt-2 border-t border-slate-100 space-y-1">
-                  <button
-                    onClick={() => {
-                      onOpenSquadImport();
-                      setShowProfileMenu(false);
-                    }}
-                    className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 rounded flex items-center gap-1.5 cursor-pointer font-medium"
-                  >
-                    <Truck className="w-3.5 h-3.5 text-red-700" />
-                    <span>Cadastro de Guarnições e Escala e-193</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      onOpenShiftHandover();
-                      setShowProfileMenu(false);
-                    }}
-                    className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 rounded flex items-center gap-1.5 cursor-pointer font-medium"
-                  >
-                    <Clock className="w-3.5 h-3.5 text-amber-700" />
-                    <span>Ata de Passagem de Turno</span>
-                  </button>
-
-                  <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between px-1 text-[11px]">
-                    <button
-                      onClick={() => {
-                        handleExportJson();
-                        setShowProfileMenu(false);
-                      }}
-                      className="text-slate-600 hover:text-slate-900 flex items-center gap-1 py-1 cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Backup JSON</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm('Deseja resetar todas as ocorrências para os dados de demonstração do 4º BBM de Santa Maria?')) {
-                          onResetData();
-                          setShowProfileMenu(false);
-                        }
-                      }}
-                      className="text-red-700 hover:text-red-800 font-semibold flex items-center gap-1 py-1 cursor-pointer"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Resetar Dados</span>
-                    </button>
+                <div className="hidden sm:block">
+                  <div className="text-xs font-bold text-white line-clamp-1">
+                    {authenticatedMilitar ? `${authenticatedMilitar.posto_graduacao} ${authenticatedMilitar.nome_guerra}` : currentUser.name}
+                  </div>
+                  <div className="text-[10px] text-red-200">
+                    {authenticatedMilitar ? `Mat: ${authenticatedMilitar.matricula}` : currentUser.rank}
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+                <ChevronDown className="w-3.5 h-3.5 text-red-300 hidden sm:block" />
+              </button>
+
+              {/* Profile Dropdown Menu */}
+              {showProfileMenu && (
+                <div 
+                  className="absolute right-0 mt-2 w-72 bg-white text-slate-800 border border-slate-200 rounded-xl shadow-2xl p-2 z-[1300] space-y-1 animate-fadeIn"
+                  onMouseLeave={() => setShowProfileMenu(false)}
+                >
+                  {authenticatedMilitar && (
+                    <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-red-800 text-white flex items-center justify-center font-bold text-xs">
+                          {authenticatedMilitar.posto_graduacao}
+                        </div>
+                        <div>
+                          <div className="font-extrabold text-slate-900 text-xs">
+                            {authenticatedMilitar.posto_graduacao} {authenticatedMilitar.nome_guerra}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500">
+                            Matrícula: {authenticatedMilitar.matricula} • {authenticatedMilitar.perfil}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="px-3 py-1 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    Posto / Viatura Operacional em Serviço:
+                  </div>
+
+                  {allUsers.map((u) => {
+                    const isSelected = u.id === currentUser.id;
+                    return (
+                      <button
+                        key={u.id}
+                        onClick={() => {
+                          onSelectUser(u);
+                          setShowProfileMenu(false);
+                        }}
+                        className={`w-full text-left p-2 rounded-lg text-xs transition-colors flex items-center justify-between cursor-pointer ${
+                          isSelected 
+                            ? 'bg-red-50 border border-red-200 text-red-900 font-bold' 
+                            : 'hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-semibold text-slate-900">{u.name}</div>
+                          <div className="text-[10px] text-slate-500">{u.rank}</div>
+                        </div>
+                        <div>
+                          {getRoleBadge(u.role)}
+                        </div>
+                      </button>
+                    );
+                  })}
+
+                  <div className="pt-2 border-t border-slate-100 space-y-1">
+                    <button
+                      onClick={() => {
+                        onOpenSquadImport();
+                        setShowProfileMenu(false);
+                      }}
+                      className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 rounded flex items-center gap-1.5 cursor-pointer font-medium"
+                    >
+                      <Truck className="w-3.5 h-3.5 text-red-700" />
+                      <span>Cadastro de Guarnições e Escala e-193</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        onOpenShiftHandover();
+                        setShowProfileMenu(false);
+                      }}
+                      className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 rounded flex items-center gap-1.5 cursor-pointer font-medium"
+                    >
+                      <Clock className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Ata de Passagem de Turno</span>
+                    </button>
+
+                    {onLogout && (
+                      <button
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          onLogout();
+                        }}
+                        className="w-full text-left px-2 py-1.5 text-xs text-red-700 hover:bg-red-50 rounded flex items-center gap-1.5 cursor-pointer font-bold border-t border-slate-100 mt-1"
+                      >
+                        <LogOut className="w-3.5 h-3.5 text-red-700" />
+                        <span>Sair / Trocar Militar (Logout)</span>
+                      </button>
+                    )}
+
+                    <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between px-1 text-[11px]">
+                      <button
+                        onClick={() => {
+                          handleExportJson();
+                          setShowProfileMenu(false);
+                        }}
+                        className="text-slate-600 hover:text-slate-900 flex items-center gap-1 py-1 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Backup JSON</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm('Deseja resetar todas as ocorrências para os dados de demonstração do 4º BBM de Santa Maria?')) {
+                            onResetData();
+                            setShowProfileMenu(false);
+                          }
+                        }}
+                        className="text-red-700 hover:text-red-800 font-semibold flex items-center gap-1 py-1 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Resetar Dados</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
 
         </div>
 

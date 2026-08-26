@@ -24,6 +24,11 @@ import {
   setSquadInAttendance,
   getHoursPending
 } from './services/storageService';
+import { 
+  getCurrentMilitar, 
+  logoutMilitar, 
+  MilitarUser 
+} from './services/authService';
 
 // Components
 import { Header } from './components/Header';
@@ -36,6 +41,10 @@ import { AttendanceFormModal } from './components/AttendanceFormModal';
 import { CobomNewOccurrenceModal } from './components/CobomNewOccurrenceModal';
 import { ShiftHandoverModal } from './components/ShiftHandoverModal';
 import { NotificationsDrawer } from './components/NotificationsDrawer';
+import { PopViewerModal } from './components/PopViewerModal';
+import { DetailedReportPrintModal } from './components/DetailedReportPrintModal';
+import { LoginModal } from './components/LoginModal';
+import { ForcePasswordChangeModal } from './components/ForcePasswordChangeModal';
 
 import { 
   ShieldAlert, 
@@ -52,6 +61,11 @@ import {
 } from 'lucide-react';
 
 export default function App() {
+  // Authentication State with Supabase
+  const [authenticatedMilitar, setAuthenticatedMilitar] = useState<MilitarUser | null>(null);
+  const [requiresPasswordChange, setRequiresPasswordChange] = useState<boolean>(false);
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+
   // Database Entities
   const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
   const [platoons, setPlatoons] = useState<Platoon[]>([]);
@@ -71,9 +85,29 @@ export default function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isShiftHandoverOpen, setIsShiftHandoverOpen] = useState(false);
   const [isSquadImportOpen, setIsSquadImportOpen] = useState(false);
+  const [isPopViewerOpen, setIsPopViewerOpen] = useState(false);
+  const [isDetailedReportOpen, setIsDetailedReportOpen] = useState(false);
 
   // Status Filter from Dashboard Cards
   const [activeStatusFilter, setActiveStatusFilter] = useState<string>('TODOS');
+
+  // Initial Auth Check
+  useEffect(() => {
+    async function initAuth() {
+      try {
+        const militar = await getCurrentMilitar();
+        if (militar) {
+          setAuthenticatedMilitar(militar);
+          setRequiresPasswordChange(Boolean(militar.senha_temporaria));
+        }
+      } catch (e) {
+        console.error('Erro na checagem de autenticação:', e);
+      } finally {
+        setAuthChecking(false);
+      }
+    }
+    initAuth();
+  }, []);
 
   // Initial Load
   const loadAllData = useCallback(() => {
@@ -139,6 +173,49 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Handle Login from Supabase Modal
+  const handleLoginSuccess = (militar: MilitarUser) => {
+    setAuthenticatedMilitar(militar);
+    if (militar.senha_temporaria) {
+      setRequiresPasswordChange(true);
+    } else {
+      setRequiresPasswordChange(false);
+    }
+
+    // Automatically adapt current user context if matching role
+    if (militar.perfil === 'COBOM') {
+      const cobomUser = users.find(u => u.role === 'COBOM');
+      if (cobomUser) {
+        setCurrentUser(cobomUser);
+        persistCurrentUser(cobomUser);
+      }
+    } else if (militar.perfil === 'GUARNICAO') {
+      const guarnicaoUser = users.find(u => u.role === 'GUARNICAO');
+      if (guarnicaoUser) {
+        setCurrentUser(guarnicaoUser);
+        persistCurrentUser(guarnicaoUser);
+      }
+    }
+  };
+
+  // Handle Password Changed successfully
+  const handlePasswordChanged = () => {
+    setRequiresPasswordChange(false);
+    if (authenticatedMilitar) {
+      setAuthenticatedMilitar({
+        ...authenticatedMilitar,
+        senha_temporaria: false
+      });
+    }
+  };
+
+  // Handle Logout
+  const handleLogout = async () => {
+    await logoutMilitar();
+    setAuthenticatedMilitar(null);
+    setRequiresPasswordChange(false);
+  };
+
   // Switch User Profile
   const handleSelectUser = (user: User) => {
     persistCurrentUser(user);
@@ -189,14 +266,31 @@ export default function App() {
     }
   };
 
-  if (!currentUser) {
+  if (authChecking || !currentUser) {
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="text-center space-y-3 text-slate-700">
-          <div className="w-10 h-10 border-4 border-red-700 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="font-mono text-xs font-semibold uppercase tracking-wider">Carregando Sistema CBMRS 4º BBM...</p>
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="text-center space-y-3 text-white">
+          <div className="w-10 h-10 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="font-mono text-xs font-semibold uppercase tracking-wider text-slate-300">
+            Conectando ao Sistema CBMRS 4º BBM...
+          </p>
         </div>
       </div>
+    );
+  }
+
+  // If not authenticated in Supabase, show Login Modal
+  if (!authenticatedMilitar) {
+    return <LoginModal onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // If militar has temporary password, require password change
+  if (requiresPasswordChange && authenticatedMilitar) {
+    return (
+      <ForcePasswordChangeModal
+        militar={authenticatedMilitar}
+        onPasswordChanged={handlePasswordChanged}
+      />
     );
   }
 
@@ -213,6 +307,7 @@ export default function App() {
       {/* 1. Official Header */}
       <Header
         currentUser={currentUser}
+        authenticatedMilitar={authenticatedMilitar}
         allUsers={users}
         unreadNotificationsCount={unreadNotifsCount}
         activeMainTab={activeMainTab}
@@ -222,7 +317,10 @@ export default function App() {
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         onOpenShiftHandover={() => setIsShiftHandoverOpen(true)}
         onOpenSquadImport={() => setIsSquadImportOpen(true)}
+        onOpenPopViewer={() => setIsPopViewerOpen(true)}
+        onOpenDetailedReport={() => setIsDetailedReportOpen(true)}
         onResetData={handleResetData}
+        onLogout={handleLogout}
       />
 
       {/* Role Context Notification Bar */}
@@ -231,7 +329,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             <span className="text-red-100">
-              Operando como: <strong className="text-white font-bold">{currentUser.rank} {currentUser.name}</strong> ({currentUser.role})
+              Operando como: <strong className="text-white font-bold">{authenticatedMilitar.posto_graduacao} {authenticatedMilitar.nome_guerra}</strong> ({currentUser.name} - {currentUser.role})
             </span>
             <span className="text-red-300 hidden sm:inline">•</span>
             <span className="text-red-200 hidden sm:inline">
@@ -260,6 +358,8 @@ export default function App() {
             occurrences={occurrences}
             platoons={platoons}
             squads={squads}
+            onOpenDetailedReport={() => setIsDetailedReportOpen(true)}
+            onOpenPopViewer={() => setIsPopViewerOpen(true)}
           />
         ) : (
           /* PAINEL OPERACIONAL PADRÃO */
@@ -403,6 +503,21 @@ export default function App() {
           onMarkAsRead={handleMarkNotificationAsRead}
           onMarkAllAsRead={handleMarkAllNotificationsAsRead}
           onSelectOccurrenceByProtocol={handleSelectOccurrenceByProtocol}
+        />
+      )}
+
+      {/* 7. POP Consulta e Visualizador PDF Oficial */}
+      {isPopViewerOpen && (
+        <PopViewerModal onClose={() => setIsPopViewerOpen(false)} />
+      )}
+
+      {/* 8. Relatório Detalhado de Impressão (Feito vs Pendente no Período) */}
+      {isDetailedReportOpen && (
+        <DetailedReportPrintModal
+          occurrences={occurrences}
+          squads={squads}
+          platoons={platoons}
+          onClose={() => setIsDetailedReportOpen(false)}
         />
       )}
 
