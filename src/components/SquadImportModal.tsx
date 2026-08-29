@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { Squad, User, Platoon, SquadMember } from '../types';
 import { 
-  getStoredRawE193, 
   parseAndRegisterE193Roster,
-  INITIAL_E193_RAW_TEXT,
   addSquadMember,
   updateSquadMember,
   removeSquadMember,
@@ -70,7 +68,7 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
 }) => {
   const [activeSquadsList, setActiveSquadsList] = useState<Squad[]>(currentSquads || squads || []);
   const [activeUsersList, setActiveUsersList] = useState<User[]>(currentUsers || users || []);
-  const [rawText, setRawText] = useState(getStoredRawE193());
+  const [rawText, setRawText] = useState('');
   const [activeTab, setActiveTab] = useState<'VIEW_ROSTER' | 'PASTE'>('VIEW_ROSTER');
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -93,7 +91,7 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
 
   const [isAddingSquad, setIsAddingSquad] = useState(false);
   const [newSquadCallSign, setNewSquadCallSign] = useState('');
-  const [newSquadPlatoonId, setNewSquadPlatoonId] = useState(platoons[0]?.id || 'plat-1');
+  const [newSquadPlatoonId, setNewSquadPlatoonId] = useState(platoons[0]?.id || '');
   const [newSquadCommander, setNewSquadCommander] = useState('A Definir');
   const [newSquadShift, setNewSquadShift] = useState('Turno 24h (08:00 às 08:00)');
 
@@ -114,27 +112,17 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
     }
 
     try {
-      const result = parseAndRegisterE193Roster(rawText);
+      const result = parseAndRegisterE193Roster(rawText, activeSquadsList, platoons);
       notifyUpdated(result.squads, result.users);
       if (onImportSuccess) {
         onImportSuccess();
       }
-      setSuccessMsg(`Sucesso! ${result.squads.length} guarnições e ${result.users.length} militares cadastrados e sincronizados com o e-193.`);
+      setSuccessMsg(`Sucesso! ${result.squads.length} guarnições e ${result.users.length} militares processados do e-193.`);
       setActiveTab('VIEW_ROSTER');
     } catch (err) {
       console.error(err);
       setErrorMsg('Erro ao processar dados do e-193. Verifique a formatação.');
     }
-  };
-
-  const handleResetToDefault = () => {
-    setRawText(INITIAL_E193_RAW_TEXT);
-    const result = parseAndRegisterE193Roster(INITIAL_E193_RAW_TEXT);
-    notifyUpdated(result.squads, result.users);
-    if (onImportSuccess) {
-      onImportSuccess();
-    }
-    setSuccessMsg('Escala padrão de Santa Maria (4º BBM) restaurada.');
   };
 
   // Open Edit/Add Member Form
@@ -187,15 +175,16 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
     };
 
     try {
-      let res;
+      let updatedSquads: Squad[];
       // If transferring to a different squad or changing registration
       if (!editingMember.isNew && editingMember.originalSquadId !== editingMember.squadId) {
-        removeSquadMember(editingMember.originalSquadId, editingMember.originalReg);
-        res = addSquadMember(editingMember.squadId, newMemberObj, editingMember.isCommander);
+        const withoutOld = removeSquadMember(activeSquadsList, editingMember.originalSquadId, editingMember.originalReg);
+        updatedSquads = addSquadMember(withoutOld, editingMember.squadId, newMemberObj, editingMember.isCommander);
       } else if (editingMember.isNew) {
-        res = addSquadMember(editingMember.squadId, newMemberObj, editingMember.isCommander);
+        updatedSquads = addSquadMember(activeSquadsList, editingMember.squadId, newMemberObj, editingMember.isCommander);
       } else {
-        res = updateSquadMember(
+        updatedSquads = updateSquadMember(
+          activeSquadsList,
           editingMember.squadId, 
           editingMember.originalReg, 
           newMemberObj, 
@@ -203,7 +192,7 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
         );
       }
 
-      notifyUpdated(res.squads, res.users);
+      notifyUpdated(updatedSquads, activeUsersList);
       setEditingMember(null);
       setSuccessMsg(`Posto operacional ${roleTitle} atualizado na viatura com sucesso.`);
     } catch (err) {
@@ -214,15 +203,15 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
 
   const handleDeleteMember = (squadId: string, reg: string, name: string) => {
     if (confirm(`Deseja remover o posto ${name} (${reg}) da viatura?`)) {
-      const res = removeSquadMember(squadId, reg);
-      notifyUpdated(res.squads, res.users);
+      const updatedSquads = removeSquadMember(activeSquadsList, squadId, reg);
+      notifyUpdated(updatedSquads, activeUsersList);
       setSuccessMsg(`Posto operacional removido da escala.`);
     }
   };
 
   const handleSetCommander = (squadId: string, commanderName: string) => {
-    const res = setSquadCommander(squadId, commanderName);
-    notifyUpdated(res.squads, activeUsersList);
+    const updatedSquads = setSquadCommander(activeSquadsList, squadId, commanderName);
+    notifyUpdated(updatedSquads, activeUsersList);
     setSuccessMsg(`Comando da guarnição atualizado.`);
   };
 
@@ -250,8 +239,8 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
       members: []
     };
 
-    const res = addNewSquad(newSquadObj);
-    notifyUpdated(res.squads, activeUsersList);
+    const updatedSquads = addNewSquad(activeSquadsList, newSquadObj);
+    notifyUpdated(updatedSquads, activeUsersList);
     setIsAddingSquad(false);
     setNewSquadCallSign('');
     setSuccessMsg(`Viatura ${newSquadObj.callSign} cadastrada no ${plat?.name}.`);
@@ -259,8 +248,8 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
 
   const handleDeleteSquad = (squadId: string, callSign: string) => {
     if (confirm(`Deseja remover a viatura ${callSign} da escala do dia?`)) {
-      const res = removeSquad(squadId);
-      notifyUpdated(res.squads, activeUsersList);
+      const updatedSquads = removeSquad(activeSquadsList, squadId);
+      notifyUpdated(updatedSquads, activeUsersList);
       setSuccessMsg(`Viatura ${callSign} removida.`);
     }
   };
@@ -383,33 +372,22 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
                 />
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={handleResetToDefault}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded-lg flex items-center gap-1.5 cursor-pointer border border-slate-300"
+                  onClick={() => setActiveTab('VIEW_ROSTER')}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-200 rounded-lg cursor-pointer"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Carregar Escala Padrão de Santa Maria</span>
+                  Cancelar
                 </button>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('VIEW_ROSTER')}
-                    className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-200 rounded-lg cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleProcessImport}
-                    className="px-5 py-2.5 bg-red-800 hover:bg-red-700 rounded-lg text-xs font-extrabold text-white flex items-center gap-2 shadow-sm transition-all cursor-pointer"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Processar e Cadastrar Guarnições</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleProcessImport}
+                  className="px-5 py-2.5 bg-red-800 hover:bg-red-700 rounded-lg text-xs font-extrabold text-white flex items-center gap-2 shadow-sm transition-all cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Processar Escala e-193</span>
+                </button>
               </div>
             </div>
           ) : (

@@ -6,266 +6,21 @@ import {
   User,
   AppNotification,
   AttendanceRecord,
-  OccurrencePhoto,
-  UserRole
 } from '../types';
 import {
   insertOccurrenceToSupabase,
   updateOccurrenceInSupabase,
   deleteOccurrenceFromSupabase,
   recordAttendanceInSupabase,
-  fetchOccurrencesFromSupabase,
-  fetchPlatoonsFromSupabase,
-  fetchSquadsFromSupabase,
-  fetchNotificationsFromSupabase,
   insertNotificationToSupabase,
-  markNotificationAsReadInSupabase,
-  ensureUUID
+  fetchOccurrencesFromSupabase,
+  ensureUUID,
 } from './supabaseDataService';
-
-const STORAGE_KEYS = {
-  OCCURRENCES: 'cbmrs_arvores_occurrences_v4_sm',
-  PLATOONS: 'cbmrs_arvores_platoons_v4_sm',
-  SQUADS: 'cbmrs_arvores_squads_v4_sm',
-  USERS: 'cbmrs_arvores_users_v4_sm',
-  NOTIFICATIONS: 'cbmrs_arvores_notifications_v4_sm',
-  CURRENT_USER_ID: 'cbmrs_arvores_current_user_v4_sm',
-  RAW_E193: 'cbmrs_arvores_raw_e193_v4_sm'
-};
-
-// Fallback visual temporário para renderização instantânea enquanto a rede conecta
-export const SEED_PLATOONS: Platoon[] = [
-  {
-    id: 'plat-1',
-    name: '1º Pelotão de Bombeiros Militar (Santa Maria)',
-    bbm: '4º BBM / 1ª CIA / 1º PEL / SANTA MARIA',
-    headquarters: 'Quartel Central - Rua Coronel Niederauer, 890 - Centro',
-    commanderName: 'Oficial de Dia (1º Pelotão)',
-  },
-  {
-    id: 'plat-2',
-    name: '2º Pelotão de Busca e Salvamento (P. Pinheiro Machado)',
-    bbm: '4º BBM / 1ª CIA / 2º PEL BS/ P. PINHEIRO MACHADO',
-    headquarters: 'Posto Pinheiro Machado - BR-287, Santa Maria',
-    commanderName: 'Oficial de Dia (2º Pelotão)',
-  },
-  {
-    id: 'plat-3',
-    name: '3º Pelotão de Bombeiros Militar (Camobi)',
-    bbm: '4º BBM / 1ª CIA / 3º PEL / CAMOBI',
-    headquarters: 'Posto Camobi - Av. Roraima, Santa Maria',
-    commanderName: 'Oficial de Dia (3º Pelotão)',
-  },
-  {
-    id: 'plat-cobom',
-    name: 'Central de Operações de Bombeiros (COBOM-SM)',
-    bbm: '4º BBM / COBOM-SM',
-    headquarters: 'CIOSP Santa Maria - Central 193',
-    commanderName: 'Chefe de Operações 193',
-  }
-];
-
-export const SEED_SQUADS: Squad[] = [
-  {
-    id: 'squad-abt-1496',
-    name: 'ABT-1496 (1º Pelotão Centro)',
-    callSign: 'ABT-1496',
-    unitText: '4º BBM / 1ª CIA / 1º PEL / SANTA MARIA',
-    platoonId: 'plat-1',
-    commanderName: 'Comandante da VTR',
-    currentShift: 'Turno 24h (08:00 às 08:00)',
-    status: 'DISPONIVEL',
-    activeMembersCount: 4,
-  },
-  {
-    id: 'squad-abt-534',
-    name: 'ABT-534 (3º Pelotão Camobi)',
-    callSign: 'ABT-534',
-    unitText: '4º BBM / 1ª CIA / 3º PEL / CAMOBI',
-    platoonId: 'plat-3',
-    commanderName: 'Comandante da VTR',
-    currentShift: 'Turno 24h (08:00 às 08:00)',
-    status: 'DISPONIVEL',
-    activeMembersCount: 3,
-  },
-  {
-    id: 'squad-abc-794',
-    name: 'ABC-794 (2º Pel BS Pinheiro Machado)',
-    callSign: 'ABC-794',
-    unitText: '4º BBM / 1ª CIA / 2º PEL BS/ P. PINHEIRO MACHADO',
-    platoonId: 'plat-2',
-    commanderName: 'Comandante da VTR',
-    currentShift: 'Turno 12h Especializada (07:00 às 19:00)',
-    status: 'DISPONIVEL',
-    activeMembersCount: 3,
-  },
-  {
-    id: 'squad-abt-1238',
-    name: 'ABT-1238 (1º Pelotão Centro)',
-    callSign: 'ABT-1238',
-    unitText: '4º BBM / 1ª CIA / 1º PEL / SANTA MARIA',
-    platoonId: 'plat-1',
-    commanderName: 'Comandante da VTR',
-    currentShift: 'Turno 12h/12h (08:00 às 20:00)',
-    status: 'DISPONIVEL',
-    activeMembersCount: 2,
-  },
-  {
-    id: 'squad-atp-0561',
-    name: 'ATP-0561 (2º Pel BS Pinheiro Machado)',
-    callSign: 'ATP-0561',
-    unitText: '4º BBM / 1ª CIA / 2º PEL BS/ P. PINHEIRO MACHADO',
-    platoonId: 'plat-2',
-    commanderName: 'Comandante da VTR',
-    currentShift: 'Turno 12h Especializada (19:00 às 07:00)',
-    status: 'DISPONIVEL',
-    activeMembersCount: 2,
-  },
-  {
-    id: 'squad-cobom-sm',
-    name: 'COBOM-SM (Central 193)',
-    callSign: 'COBOM-SM',
-    unitText: '4º BBM / COBOM-SM',
-    platoonId: 'plat-cobom',
-    commanderName: 'Chefe de Sala 193',
-    currentShift: 'Turno 24h Central 193',
-    status: 'DISPONIVEL',
-    activeMembersCount: 2,
-  }
-];
-
-export const SEED_USERS: User[] = [
-  {
-    id: 'user-cobom-sm',
-    name: 'COBOM 193',
-    rank: 'Central de Operações',
-    role: 'COBOM',
-    platoonId: 'plat-cobom',
-    squadId: 'squad-cobom-sm',
-    registrationNumber: 'CIOSP-193',
-  },
-  {
-    id: 'user-guarnicao-abt-534',
-    name: 'Guarnição ABT-534',
-    rank: '3º Pelotão (Camobi)',
-    role: 'GUARNICAO',
-    platoonId: 'plat-3',
-    squadId: 'squad-abt-534',
-    registrationNumber: 'ABT-534',
-  },
-  {
-    id: 'user-guarnicao-abt-1496',
-    name: 'Guarnição ABT-1496',
-    rank: '1º Pelotão (Centro)',
-    role: 'GUARNICAO',
-    platoonId: 'plat-1',
-    squadId: 'squad-abt-1496',
-    registrationNumber: 'ABT-1496',
-  },
-  {
-    id: 'user-guarnicao-abc-794',
-    name: 'Guarnição ABC-794',
-    rank: '2º Pelotão (P. Machado)',
-    role: 'GUARNICAO',
-    platoonId: 'plat-2',
-    squadId: 'squad-abc-794',
-    registrationNumber: 'ABC-794',
-  },
-  {
-    id: 'user-pelotao-medeiros',
-    name: 'Comando de Pelotão',
-    rank: 'Oficial de Dia (1ª Cia / 4º BBM)',
-    role: 'PELOTAO',
-    platoonId: 'plat-1',
-    registrationNumber: 'CMT-PEL',
-  }
-];
-
-export const SEED_OCCURRENCES: Occurrence[] = [];
-export const SEED_NOTIFICATIONS: AppNotification[] = [];
-
-/**
- * Cache local apenas para renderização instantânea (Leitura)
- */
-export function getStoredOccurrences(): Occurrence[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.OCCURRENCES);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveOccurrences(occurrences: Occurrence[]): void {
-  localStorage.setItem(STORAGE_KEYS.OCCURRENCES, JSON.stringify(occurrences));
-}
-
-export function getStoredPlatoons(): Platoon[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.PLATOONS);
-    return raw ? JSON.parse(raw) : SEED_PLATOONS;
-  } catch {
-    return SEED_PLATOONS;
-  }
-}
-
-export function savePlatoons(platoons: Platoon[]): void {
-  localStorage.setItem(STORAGE_KEYS.PLATOONS, JSON.stringify(platoons));
-}
-
-export function getStoredSquads(): Squad[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SQUADS);
-    return raw ? JSON.parse(raw) : SEED_SQUADS;
-  } catch {
-    return SEED_SQUADS;
-  }
-}
-
-export function saveSquads(squads: Squad[]): void {
-  localStorage.setItem(STORAGE_KEYS.SQUADS, JSON.stringify(squads));
-}
-
-export function getStoredUsers(): User[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.USERS);
-    return raw ? JSON.parse(raw) : SEED_USERS;
-  } catch {
-    return SEED_USERS;
-  }
-}
-
-export function saveUsers(users: User[]): void {
-  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-}
-
-export function getCurrentUser(): User {
-  const users = getStoredUsers();
-  const currentId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
-  const found = users.find(u => u.id === currentId);
-  return found || users[0] || SEED_USERS[0];
-}
-
-export function setCurrentUser(user: User): void {
-  localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, user.id);
-}
-
-export function getStoredNotifications(): AppNotification[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveNotifications(notifs: AppNotification[]): void {
-  localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(notifs));
-}
 
 /**
  * ============================================================================
- * OPERAÇÕES DE ESCRITA DEFINITIVAS CONTRA O SUPABASE COM PROPAGAÇÃO DE ERROS
+ * OPERAÇÕES DIRETAS CONTRA O SUPABASE — SUPABASE COMO ÚNICA FONTE DE VERDADE
+ * SEM DADOS FIXOS OU CACHE LOCAL (LOCALSTORAGE)
  * ============================================================================
  */
 
@@ -296,29 +51,21 @@ export async function createOccurrence(
   // 1. Grava obrigatoriamente no Supabase e aguarda confirmação
   const savedOcc = await insertOccurrenceToSupabase(fullOccurrence, militarUuid);
 
-  // 2. Atualiza o cache local
-  const currentList = getStoredOccurrences();
-  const updatedList = [savedOcc, ...currentList.filter(o => o.id !== savedOcc.id)];
-  saveOccurrences(updatedList);
-
-  // 3. Notificação no Supabase
-  const squad = getStoredSquads().find(s => s.id === newOcc.assignedSquadId);
+  // 2. Notificação no Supabase
   const notif: AppNotification = {
     id: ensureUUID(),
     title: `🚨 Nova Ocorrência Registrada: ${protocol}`,
-    message: `COBOM-SM despachou atendimento para ${newOcc.address} (${newOcc.neighborhood || ''}, ${newOcc.city || 'Santa Maria'}). Natureza: ${newOcc.dispatchNature}. Guarnição empenhada: ${squad?.name || 'A definir'}.`,
+    message: `COBOM-SM despachou atendimento para ${newOcc.address} (${newOcc.neighborhood || ''}, ${newOcc.city || 'Santa Maria'}). Natureza: ${newOcc.dispatchNature}.`,
     type: 'NEW_OCCURRENCE',
     occurrenceId: savedOcc.id,
     occurrenceProtocol: protocol,
     targetRoles: ['COBOM', 'GUARNICAO', 'PELOTAO'],
     targetSquadId: newOcc.assignedSquadId,
     createdAt: nowIso,
-    isRead: false
+    isRead: false,
   };
 
   await insertNotificationToSupabase(notif);
-  const notifs = [notif, ...getStoredNotifications()];
-  saveNotifications(notifs);
 
   return savedOcc;
 }
@@ -327,41 +74,21 @@ export async function createOccurrence(
  * Atualização dos dados da ocorrência pelo COBOM
  */
 export async function updateOccurrence(updated: Occurrence): Promise<void> {
-  // 1. Grava no Supabase e aguarda confirmação
   await updateOccurrenceInSupabase(updated);
-
-  // 2. Atualiza cache local
-  const list = getStoredOccurrences();
-  const index = list.findIndex(o => o.id === updated.id);
-  if (index !== -1) {
-    list[index] = {
-      ...updated,
-      updatedAt: new Date().toISOString(),
-    };
-    saveOccurrences(list);
-  }
 }
 
 /**
  * Exclusão definitiva de ocorrência (Exclusivo COBOM)
  */
 export async function deleteOccurrence(occurrenceId: string): Promise<void> {
-  // 1. Deleta no Supabase
   await deleteOccurrenceFromSupabase(occurrenceId);
-
-  // 2. Atualiza cache local
-  const list = getStoredOccurrences().filter(o => o.id !== occurrenceId);
-  saveOccurrences(list);
-
-  const notifs = getStoredNotifications().filter(n => n.occurrenceId !== occurrenceId);
-  saveNotifications(notifs);
 }
 
 /**
  * Registro de Atendimento pela Guarnição
  */
 export async function recordAttendance(
-  occurrenceId: string, 
+  occurrenceId: string,
   record: Omit<AttendanceRecord, 'id' | 'occurrenceId'>,
   user: User,
   militarUuid?: string
@@ -374,117 +101,71 @@ export async function recordAttendance(
   };
 
   // 1. Grava no Supabase
-  const savedRecord = await recordAttendanceInSupabase(occurrenceId, fullRecord, militarUuid);
+  await recordAttendanceInSupabase(occurrenceId, fullRecord, militarUuid);
 
-  // 2. Atualiza cache local
-  const list = getStoredOccurrences();
-  const index = list.findIndex(o => o.id === occurrenceId);
-  if (index === -1) {
-    throw new Error('Ocorrência não encontrada no cache local.');
-  }
-
-  const occ = list[index];
-  const newAttendances = [...occ.attendances.filter(a => a.id !== savedRecord.id), savedRecord];
-  const newStatus = record.statusResult === 'CONCLUIDA' ? 'CONCLUIDA' : 'PENDENTE';
-  const isPending = newStatus === 'PENDENTE';
-
-  const updatedOcc: Occurrence = {
-    ...occ,
-    status: newStatus,
-    updatedAt: new Date().toISOString(),
-    lastAttendanceAt: record.finishedAt,
-    totalAttendancesCount: newAttendances.length,
-    isCarriedOver: isPending ? true : occ.isCarriedOver,
-    attendances: newAttendances,
-  };
-
-  list[index] = updatedOcc;
-  saveOccurrences(list);
-
-  // 3. Notificação
+  // 2. Notificação
   const notif: AppNotification = {
     id: ensureUUID(),
     title: record.statusResult === 'CONCLUIDA'
-      ? `✅ Ocorrência Concluída: ${occ.protocol}`
-      : `⚠️ Ocorrência NÃO Concluída: ${occ.protocol}`,
+      ? `✅ Atendimento Concluído na Ocorrência`
+      : `⚠️ Ocorrência Registrada como PENDENTE`,
     message: record.statusResult === 'CONCLUIDA'
-      ? `A ${record.squadName} finalizou com sucesso o corte/vistoria na ${occ.address} (${occ.city}).`
+      ? `A ${record.squadName} finalizou com sucesso o corte/vistoria.`
       : `A ${record.squadName} registrou atendimento pendente. Motivo: ${record.unresolvedReason || 'Operacional'}.`,
     type: record.statusResult === 'CONCLUIDA' ? 'STATUS_CHANGE' : 'CRITICAL_UNRESOLVED',
-    occurrenceId: occ.id,
-    occurrenceProtocol: occ.protocol,
+    occurrenceId: occurrenceId,
+    occurrenceProtocol: '',
     targetRoles: ['COBOM', 'PELOTAO', 'GUARNICAO'],
-    targetSquadId: occ.assignedSquadId,
+    targetSquadId: record.squadId,
     createdAt: new Date().toISOString(),
-    isRead: false
+    isRead: false,
   };
 
   await insertNotificationToSupabase(notif);
-  const notifs = [notif, ...getStoredNotifications()];
-  saveNotifications(notifs);
 
-  return updatedOcc;
+  const occs = await fetchOccurrencesFromSupabase();
+  const found = occs.find(o => o.id === occurrenceId);
+  if (found) return found;
+
+  throw new Error(`Ocorrência ${occurrenceId} atualizada no Supabase mas não localizada na listagem.`);
 }
 
 /**
  * Atualiza status para 'EM_ATENDIMENTO' quando a guarnição desloca/chega no local
  */
-export async function setSquadInAttendance(occurrenceId: string, squadId: string): Promise<Occurrence> {
-  const list = getStoredOccurrences();
-  const index = list.findIndex(o => o.id === occurrenceId);
-  if (index === -1) throw new Error('Ocorrência não encontrada');
+export async function setSquadInAttendance(
+  occurrenceOrId: Occurrence | string,
+  squadId: string
+): Promise<Occurrence> {
+  const occId = typeof occurrenceOrId === 'string' ? occurrenceOrId : occurrenceOrId.id;
 
-  const occ = list[index];
+  if (typeof occurrenceOrId === 'object') {
+    const updatedOcc: Occurrence = {
+      ...occurrenceOrId,
+      status: 'EM_ATENDIMENTO',
+      assignedSquadId: squadId,
+      updatedAt: new Date().toISOString(),
+    };
+    await updateOccurrenceInSupabase(updatedOcc);
+    return updatedOcc;
+  }
+
+  // Se passou apenas o ID, busca a lista do Supabase
+  const occs = await fetchOccurrencesFromSupabase();
+  const found = occs.find(o => o.id === occId);
+  if (!found) {
+    throw new Error('Ocorrência não encontrada no Supabase');
+  }
+
   const updatedOcc: Occurrence = {
-    ...occ,
+    ...found,
     status: 'EM_ATENDIMENTO',
     assignedSquadId: squadId,
     updatedAt: new Date().toISOString(),
   };
 
-  // 1. Grava no Supabase
   await updateOccurrenceInSupabase(updatedOcc);
-
-  // 2. Atualiza cache local
-  list[index] = updatedOcc;
-  saveOccurrences(list);
-
   return updatedOcc;
-}
-
-/**
- * Sincroniza todas as ocorrências do Supabase para o cache local
- */
-export async function syncOccurrencesFromSupabase(): Promise<Occurrence[]> {
-  const remoteList = await fetchOccurrencesFromSupabase();
-  saveOccurrences(remoteList);
-  return remoteList;
-}
-
-/**
- * Sincroniza squads e platoons do Supabase
- */
-export async function syncSquadsAndPlatoonsFromSupabase(): Promise<{ squads: Squad[]; platoons: Platoon[] }> {
-  const [platoons, squads] = await Promise.all([
-    fetchPlatoonsFromSupabase().catch(() => getStoredPlatoons()),
-    fetchSquadsFromSupabase().catch(() => getStoredSquads()),
-  ]);
-
-  if (platoons.length > 0) savePlatoons(platoons);
-  if (squads.length > 0) saveSquads(squads);
-
-  return { squads, platoons };
-}
-
-/**
- * Sincroniza notificações do Supabase
- */
-export async function syncNotificationsFromSupabase(): Promise<AppNotification[]> {
-  const notifs = await fetchNotificationsFromSupabase();
-  if (notifs.length > 0) {
-    saveNotifications(notifs);
-  }
-  return notifs.length > 0 ? notifs : getStoredNotifications();
 }
 
 /**
@@ -497,161 +178,234 @@ export function getHoursPending(occ: Occurrence): number {
 }
 
 /**
- * Reseta dados locais
+ * Processamento e importação de escala do e-193 em memória
  */
-export function resetToSeedData(): void {
-  localStorage.setItem(STORAGE_KEYS.OCCURRENCES, JSON.stringify(SEED_OCCURRENCES));
-  localStorage.setItem(STORAGE_KEYS.PLATOONS, JSON.stringify(SEED_PLATOONS));
-  localStorage.setItem(STORAGE_KEYS.SQUADS, JSON.stringify(SEED_SQUADS));
-  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
-  localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(SEED_NOTIFICATIONS));
+export function parseAndRegisterE193Roster(
+  rawText: string,
+  existingSquads: Squad[] = [],
+  existingPlatoons: Platoon[] = []
+): { squads: Squad[]; users: User[]; platoons: Platoon[] } {
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  const parsedSquads: Squad[] = [...existingSquads];
+  const parsedUsers: User[] = [];
+
+  let currentPlatoonId = existingPlatoons[0]?.id || '';
+  let currentSquad: Squad | null = null;
+
+  for (const line of lines) {
+    const upper = line.toUpperCase();
+    
+    // Identifica Pelotão
+    if (upper.includes('PELOTÃO') || upper.includes('PELOTAO') || upper.includes('COBOM')) {
+      const matchedPlat = existingPlatoons.find(p => 
+        upper.includes(p.name.toUpperCase().slice(0, 10)) ||
+        (upper.includes('1º') && p.name.includes('1º')) ||
+        (upper.includes('2º') && p.name.includes('2º')) ||
+        (upper.includes('3º') && p.name.includes('3º')) ||
+        (upper.includes('COBOM') && p.name.includes('COBOM'))
+      );
+      if (matchedPlat) {
+        currentPlatoonId = matchedPlat.id;
+      }
+      continue;
+    }
+
+    // Identifica Viatura (ex: ABT-1496, ABTR-1102)
+    const vtrMatch = line.match(/^([A-Z]{3,4}-\d{3,4})/i);
+    if (vtrMatch) {
+      const callSign = vtrMatch[1].toUpperCase();
+      const squadId = `squad-${callSign.toLowerCase()}`;
+      
+      let sq = parsedSquads.find(s => s.id === squadId || s.callSign === callSign);
+      if (!sq) {
+        sq = {
+          id: squadId,
+          name: `${callSign} (e-193)`,
+          callSign,
+          unitText: '4º BBM - Santa Maria',
+          platoonId: currentPlatoonId,
+          commanderName: 'A Definir',
+          currentShift: 'Turno 24h',
+          status: 'DISPONIVEL',
+          activeMembersCount: 0,
+          members: []
+        };
+        parsedSquads.push(sq);
+      }
+      currentSquad = sq;
+      continue;
+    }
+
+    // Identifica Militar/Membro da Guarnição (ex: - 1º SGT 3012948 SILVA - COMANDANTE)
+    if (line.startsWith('-') && currentSquad) {
+      const memberText = line.replace(/^-+\s*/, '').trim();
+      const parts = memberText.split('-').map(p => p.trim());
+      const milInfo = parts[0] || '';
+      const roleInfo = parts[1] || 'COMBATENTE';
+
+      const milTokens = milInfo.split(/\s+/);
+      const rank = milTokens[0] || 'SD';
+      let reg = '';
+      let warName = '';
+
+      if (milTokens.length >= 3 && /^\d+$/.test(milTokens[1])) {
+        reg = milTokens[1];
+        warName = milTokens.slice(2).join(' ');
+      } else {
+        warName = milTokens.slice(1).join(' ') || milInfo;
+        reg = `E193-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+
+      const isCommander = roleInfo.toUpperCase().includes('COMANDANTE') || roleInfo.toUpperCase().includes('OFICIAL');
+      const memberObj: SquadMember = {
+        registrationNumber: reg,
+        name: `${rank} ${warName}`,
+        rank,
+        roleInSquad: roleInfo,
+        isCommander,
+      };
+
+      currentSquad.members = currentSquad.members || [];
+      currentSquad.members = currentSquad.members.filter(m => m.registrationNumber !== reg);
+      currentSquad.members.push(memberObj);
+      currentSquad.activeMembersCount = currentSquad.members.length;
+
+      if (isCommander) {
+        currentSquad.commanderName = `${rank} ${warName}`;
+      }
+
+      parsedUsers.push({
+        id: `user-${reg}`,
+        name: warName,
+        rank,
+        role: roleInfo.toUpperCase().includes('COBOM') ? 'COBOM' : 'GUARNICAO',
+        platoonId: currentSquad.platoonId,
+        squadId: currentSquad.id,
+        registrationNumber: reg,
+      });
+    }
+  }
+
+  return { squads: parsedSquads, users: parsedUsers, platoons: existingPlatoons };
 }
 
-export const INITIAL_E193_RAW_TEXT = `4º BATALHÃO DE BOMBEIRO MILITAR - SANTA MARIA
-ESCALA DE SERVIÇO DIÁRIO - SISTEMA E-193
-
-1º PELOTÃO - SEDE
-ABT-1496 (Auto Bomba Tanque)
-- 1º SGT 3012948 SILVA - COMANDANTE DE GUARNIÇÃO
-- CB 3048591 MOREIRA - COV / CONDUTOR
-- SD 3177360 BECKER - CHEFE DE LINHA DIREITA
-- SD 3192004 SANTOS - AUXILIAR DE LINHA
-
-ABTR-1102 (Auto Bomba Tanque Resgate)
-- 2º SGT 2984110 CARVALHO - COMANDANTE DE GUARNIÇÃO
-- SD 3185490 OLIVEIRA - COV / CONDUTOR
-- SD 3201193 MACHADO - RESGATISTA
-
-2º PELOTÃO - CAMOBI
-ABT-1320 (Auto Bomba Tanque)
-- 1º SGT 2894102 RODRIGUES - COMANDANTE DE GUARNIÇÃO
-- CB 3051284 ALVES - COV / CONDUTOR
-- SD 3169482 FARIAS - CHEFE DE LINHA
-
-COBOM - CENTRAL DE OPERAÇÕES
-- CAP 2741908 DORNELLES - OFICIAL DE DIA / SUPERVISOR
-- 1º SGT 2910394 MARTINS - CHEFE DO DESPACHO
-- CB 3098172 PEREIRA - OPERADOR COBOM
-- SD 3188201 NOGUEIRA - ATENDENTE 193
-`;
-
-export function getStoredRawE193(): string {
-  return localStorage.getItem('cbmrs_raw_e193') || INITIAL_E193_RAW_TEXT;
-}
-
-export function saveStoredRawE193(text: string): void {
-  localStorage.setItem('cbmrs_raw_e193', text);
-}
-
-export function parseAndRegisterE193Roster(rawText: string): { squads: Squad[]; users: User[]; platoons: Platoon[] } {
-  saveStoredRawE193(rawText);
-  // Mantém os squads existentes ou sincronizados
-  const squads = getStoredSquads();
-  const users = getStoredUsers();
-  const platoons = getStoredPlatoons();
-  return { squads, users, platoons };
-}
-
-export function addSquadMember(squadId: string, member: SquadMember, isCommander?: boolean): { squads: Squad[]; users: User[] } {
-  const squads = getStoredSquads();
-  const users = getStoredUsers();
-  const sq = squads.find(s => s.id === squadId);
-  if (sq) {
-    sq.members = sq.members || [];
-    sq.members = sq.members.filter(m => m.registrationNumber !== member.registrationNumber);
+/**
+ * Operações puras em memória para guarnições (usadas em formulários / modais)
+ */
+export function addSquadMember(
+  currentSquads: Squad[],
+  squadId: string,
+  member: SquadMember,
+  isCommander?: boolean
+): Squad[] {
+  return currentSquads.map(sq => {
+    if (sq.id !== squadId) return sq;
+    const members = (sq.members || []).filter(m => m.registrationNumber !== member.registrationNumber);
     const newM: SquadMember = {
       ...member,
       isCommander: Boolean(isCommander)
     };
-    sq.members.push(newM);
-    if (isCommander) {
-      sq.commanderName = member.name;
-    }
-    sq.activeMembersCount = sq.members.length;
-    saveSquads(squads);
-  }
-  return { squads, users };
+    members.push(newM);
+    return {
+      ...sq,
+      members,
+      commanderName: isCommander ? member.name : sq.commanderName,
+      activeMembersCount: members.length,
+    };
+  });
 }
 
-export function updateSquadMember(squadId: string, originalReg: string, member: SquadMember, isCommander?: boolean): { squads: Squad[]; users: User[] } {
-  const squads = getStoredSquads();
-  const users = getStoredUsers();
-  const sq = squads.find(s => s.id === squadId);
-  if (sq) {
-    sq.members = sq.members || [];
-    const idx = sq.members.findIndex(m => m.registrationNumber === originalReg);
+export function updateSquadMember(
+  currentSquads: Squad[],
+  squadId: string,
+  originalReg: string,
+  member: SquadMember,
+  isCommander?: boolean
+): Squad[] {
+  return currentSquads.map(sq => {
+    if (sq.id !== squadId) return sq;
+    const members = [...(sq.members || [])];
+    const idx = members.findIndex(m => m.registrationNumber === originalReg);
     const newM: SquadMember = {
       ...member,
       isCommander: Boolean(isCommander)
     };
     if (idx !== -1) {
-      sq.members[idx] = newM;
+      members[idx] = newM;
     } else {
-      sq.members.push(newM);
+      members.push(newM);
     }
-    if (isCommander) {
-      sq.commanderName = member.name;
-    }
-    sq.activeMembersCount = sq.members.length;
-    saveSquads(squads);
-  }
-  return { squads, users };
+    return {
+      ...sq,
+      members,
+      commanderName: isCommander ? member.name : sq.commanderName,
+      activeMembersCount: members.length,
+    };
+  });
 }
 
-export function removeSquadMember(squadId: string, memberRegOrId: string): { squads: Squad[]; users: User[] } {
-  const squads = getStoredSquads();
-  const users = getStoredUsers();
-  const sq = squads.find(s => s.id === squadId);
-  if (sq && sq.members) {
-    sq.members = sq.members.filter(m => m.registrationNumber !== memberRegOrId && m.id !== memberRegOrId);
-    sq.activeMembersCount = sq.members.length;
-    saveSquads(squads);
-  }
-  return { squads, users };
+export function removeSquadMember(
+  currentSquads: Squad[],
+  squadId: string,
+  memberRegOrId: string
+): Squad[] {
+  return currentSquads.map(sq => {
+    if (sq.id !== squadId) return sq;
+    const members = (sq.members || []).filter(
+      m => m.registrationNumber !== memberRegOrId && m.id !== memberRegOrId
+    );
+    return {
+      ...sq,
+      members,
+      activeMembersCount: members.length,
+    };
+  });
 }
 
-export function addNewSquad(squad: Squad): { squads: Squad[]; users: User[] } {
-  const squads = getStoredSquads();
-  const users = getStoredUsers();
-  const exists = squads.some(s => s.id === squad.id);
-  const updated = exists ? squads.map(s => s.id === squad.id ? squad : s) : [...squads, squad];
-  saveSquads(updated);
-  return { squads: updated, users };
+export function addNewSquad(currentSquads: Squad[], squad: Squad): Squad[] {
+  const exists = currentSquads.some(s => s.id === squad.id);
+  return exists
+    ? currentSquads.map(s => s.id === squad.id ? squad : s)
+    : [...currentSquads, squad];
 }
 
-export function removeSquad(squadId: string): { squads: Squad[]; users: User[] } {
-  const squads = getStoredSquads();
-  const users = getStoredUsers();
-  const updated = squads.filter(s => s.id !== squadId);
-  saveSquads(updated);
-  return { squads: updated, users };
+export function removeSquad(currentSquads: Squad[], squadId: string): Squad[] {
+  return currentSquads.filter(s => s.id !== squadId);
 }
 
-export function setSquadCommander(squadId: string, commanderName: string): { squads: Squad[]; users: User[] } {
-  const squads = getStoredSquads();
-  const users = getStoredUsers();
-  const sq = squads.find(s => s.id === squadId);
-  if (sq) {
-    sq.commanderName = commanderName;
-    if (sq.members) {
-      sq.members.forEach(m => {
-        m.isCommander = (m.name === commanderName);
-      });
-    }
-    saveSquads(squads);
-  }
-  return { squads, users };
+export function setSquadCommander(
+  currentSquads: Squad[],
+  squadId: string,
+  commanderName: string
+): Squad[] {
+  return currentSquads.map(sq => {
+    if (sq.id !== squadId) return sq;
+    const members = (sq.members || []).map(m => ({
+      ...m,
+      isCommander: m.name === commanderName,
+    }));
+    return {
+      ...sq,
+      commanderName,
+      members,
+    };
+  });
 }
 
-export function exportDatabaseBackup(): string {
+/**
+ * Exporta backup em JSON a partir dos dados em memória carregados do Supabase
+ */
+export function exportDatabaseBackup(data: {
+  occurrences: Occurrence[];
+  platoons: Platoon[];
+  squads: Squad[];
+  users: User[];
+  notifications: AppNotification[];
+}): string {
   const backup = {
     exportedAt: new Date().toISOString(),
     system: 'CBMRS - Gestão de Ocorrências de Árvores (4º BBM - Santa Maria)',
-    occurrences: getStoredOccurrences(),
-    platoons: getStoredPlatoons(),
-    squads: getStoredSquads(),
-    users: getStoredUsers(),
-    notifications: getStoredNotifications()
+    ...data,
   };
   return JSON.stringify(backup, null, 2);
 }

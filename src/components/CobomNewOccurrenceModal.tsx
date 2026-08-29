@@ -40,7 +40,8 @@ import {
   Sparkles,
   RefreshCw,
   Compass,
-  Check
+  Check,
+  AlertCircle
 } from 'lucide-react';
 
 interface CobomNewOccurrenceModalProps {
@@ -100,8 +101,12 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
   const [treeRisk, setTreeRisk] = useState<TreeRiskType>(initialOccurrence?.treeRisk || 'GALHO_SOBRE_FIACAO_ENERGIZADA');
   const [urgency, setUrgency] = useState<OccurrenceUrgency>(initialOccurrence?.urgency || 'ALTA');
   
-  const [platoonId, setPlatoonId] = useState(initialOccurrence?.platoonId || platoons[0]?.id || 'plat-1');
-  const [assignedSquadId, setAssignedSquadId] = useState(initialOccurrence?.assignedSquadId || squads[0]?.id || 'squad-abt-1496');
+  const [platoonId, setPlatoonId] = useState<string | undefined>(
+    initialOccurrence?.platoonId || platoons[0]?.id || undefined
+  );
+  const [assignedSquadId, setAssignedSquadId] = useState<string | undefined>(
+    initialOccurrence?.assignedSquadId || (squads.length > 0 ? squads[0].id : undefined)
+  );
 
   // Initial Photos
   const [photos, setPhotos] = useState<OccurrencePhoto[]>(initialOccurrence?.initialPhotos || []);
@@ -307,6 +312,10 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
     }
     if (!description.trim()) {
       setErrorMsg('Descreva a situação/risco da árvore.');
+      return;
+    }
+    if (!assignedSquadId) {
+      setErrorMsg('Selecione uma viatura/guarnição para empenho operacional.');
       return;
     }
 
@@ -699,23 +708,33 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
               </span>
             </div>
 
+            {squads.length === 0 && (
+              <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg text-amber-900 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                <span><strong>Nenhuma guarnição disponível:</strong> Cadastre guarnições no Supabase antes de despachar ocorrências.</span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-slate-700 font-bold mb-1 text-xs">
                   Selecionar Viatura (VTR) para Atendimento *
                 </label>
                 <select
-                  value={assignedSquadId}
+                  value={assignedSquadId || ''}
                   onChange={(e) => {
                     const selectedId = e.target.value;
-                    setAssignedSquadId(selectedId);
+                    setAssignedSquadId(selectedId || undefined);
                     const selected = squads.find(s => s.id === selectedId);
                     if (selected && selected.platoonId) {
                       setPlatoonId(selected.platoonId);
                     }
                   }}
-                  className="w-full bg-red-50/60 border border-red-300 rounded-lg px-3 py-2.5 text-slate-900 focus:ring-2 focus:ring-red-600 focus:border-red-600 font-bold text-xs shadow-sm"
+                  disabled={squads.length === 0}
+                  className="w-full bg-red-50/60 border border-red-300 rounded-lg px-3 py-2.5 text-slate-900 focus:ring-2 focus:ring-red-600 focus:border-red-600 font-bold text-xs shadow-sm disabled:opacity-50"
+                  required
                 >
+                  <option value="">-- Selecione a Viatura (VTR) --</option>
                   {squads.map(s => {
                     const plat = platoons.find(p => p.id === s.platoonId);
                     return (
@@ -732,17 +751,19 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
                   Pelotão de Bombeiro Militar (PelBM) Vinculado *
                 </label>
                 <select
-                  value={platoonId}
+                  value={platoonId || ''}
                   onChange={(e) => {
                     const newPlatId = e.target.value;
-                    setPlatoonId(newPlatId);
+                    setPlatoonId(newPlatId || undefined);
                     const platSquads = squads.filter(s => s.platoonId === newPlatId);
                     if (platSquads.length > 0) {
                       setAssignedSquadId(platSquads[0].id);
                     }
                   }}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2.5 text-slate-900 focus:ring-1 focus:ring-red-600 focus:border-red-600 font-semibold text-xs"
+                  disabled={platoons.length === 0}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2.5 text-slate-900 focus:ring-1 focus:ring-red-600 focus:border-red-600 font-semibold text-xs disabled:opacity-50"
                 >
+                  <option value="">-- Selecione o Pelotão --</option>
                   {platoons.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
@@ -957,7 +978,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || squads.length === 0}
                 className="px-5 py-2.5 bg-red-800 hover:bg-red-700 rounded-lg text-xs font-extrabold text-white flex items-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
               >
                 {isSubmitting ? (

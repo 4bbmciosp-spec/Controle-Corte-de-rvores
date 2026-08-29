@@ -12,20 +12,8 @@ import {
   AppNotification 
 } from './types';
 import { 
-  getStoredOccurrences, 
-  getStoredPlatoons, 
-  getStoredSquads, 
-  getStoredUsers, 
-  getCurrentUser, 
-  setCurrentUser as persistCurrentUser,
-  getStoredNotifications, 
-  saveNotifications,
-  resetToSeedData,
   setSquadInAttendance,
   getHoursPending,
-  syncOccurrencesFromSupabase,
-  syncSquadsAndPlatoonsFromSupabase,
-  syncNotificationsFromSupabase,
   deleteOccurrence
 } from './services/storageService';
 import { 
@@ -33,7 +21,15 @@ import {
   logoutMilitar, 
   MilitarUser 
 } from './services/authService';
-import { subscribeToOccurrencesRealtime } from './services/supabaseDataService';
+import { 
+  fetchOccurrencesFromSupabase,
+  fetchPlatoonsFromSupabase,
+  fetchSquadsFromSupabase,
+  fetchNotificationsFromSupabase,
+  markNotificationAsReadInSupabase,
+  insertNotificationToSupabase,
+  subscribeToOccurrencesRealtime 
+} from './services/supabaseDataService';
 
 // Components
 import { Header } from './components/Header';
@@ -54,16 +50,9 @@ import { ForcePasswordChangeModal } from './components/ForcePasswordChangeModal'
 
 import { 
   ShieldAlert, 
-  PlusCircle, 
   Flame, 
-  Info, 
-  Clock, 
-  CheckCircle2, 
-  Truck, 
-  ShieldCheck, 
-  PhoneCall,
-  BarChart3,
-  Layers
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 
 export default function App() {
@@ -72,7 +61,11 @@ export default function App() {
   const [requiresPasswordChange, setRequiresPasswordChange] = useState<boolean>(false);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
 
-  // Database Entities
+  // Supabase Data Loading State
+  const [dataLoading, setDataLoading] = useState<boolean>(false);
+  const [dataError, setDataError] = useState<string | null>(null);
+
+  // Database Entities from Supabase
   const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
   const [platoons, setPlatoons] = useState<Platoon[]>([]);
   const [squads, setSquads] = useState<Squad[]>([]);
@@ -98,7 +91,7 @@ export default function App() {
   // Status Filter from Dashboard Cards
   const [activeStatusFilter, setActiveStatusFilter] = useState<string>('TODOS');
 
-  // Initial Auth Check
+  // 1. Initial Auth Check
   useEffect(() => {
     async function initAuth() {
       try {
@@ -116,140 +109,153 @@ export default function App() {
     initAuth();
   }, []);
 
-  // Initial Load & Supabase Remote Sync
+  // 2. Strict Supabase Data Fetching (No Local/Seed fallback)
   const loadAllData = useCallback(async () => {
-    // 1. Carrega dados do cache local inicialmente para resposta imediata
-    const loadedOccs = getStoredOccurrences();
-    const loadedPlats = getStoredPlatoons();
-    const loadedSquads = getStoredSquads();
-    const loadedUsers = getStoredUsers();
-    const loadedUser = getCurrentUser();
-    const loadedNotifs = getStoredNotifications();
+    if (!authenticatedMilitar) return;
 
-    setOccurrences(loadedOccs);
-    setPlatoons(loadedPlats);
-    setSquads(loadedSquads);
-    setUsers(loadedUsers);
-    setCurrentUser(loadedUser);
-    setNotifications(loadedNotifs);
+    setDataLoading(true);
+    setDataError(null);
 
-    // 2. Consulta e sincroniza estritamente com o banco Supabase em segundo plano
     try {
-      const [remoteOccs, remoteHierarchy, remoteNotifs] = await Promise.all([
-        syncOccurrencesFromSupabase().catch(err => {
-          console.warn('Aviso ao sincronizar ocorrências:', err);
-          return null;
+      // Parallel fetch with explicit resource-level error handling
+      const [fetchedPlatoons, fetchedSquads, fetchedOccs, fetchedNotifs] = await Promise.all([
+        fetchPlatoonsFromSupabase().catch(err => {
+          throw new Error(`Não foi possível carregar os pelotões do Supabase: ${err?.message || err}`);
         }),
-        syncSquadsAndPlatoonsFromSupabase().catch(err => {
-          console.warn('Aviso ao sincronizar pelotões/guarnições:', err);
-          return null;
+        fetchSquadsFromSupabase().catch(err => {
+          throw new Error(`Não foi possível carregar as guarnições do Supabase: ${err?.message || err}`);
         }),
-        syncNotificationsFromSupabase().catch(err => {
-          console.warn('Aviso ao sincronizar notificações:', err);
-          return null;
-        })
+        fetchOccurrencesFromSupabase().catch(err => {
+          throw new Error(`Não foi possível carregar as ocorrências do Supabase: ${err?.message || err}`);
+        }),
+        fetchNotificationsFromSupabase().catch(err => {
+          console.warn('Aviso ao carregar notificações do Supabase:', err);
+          return [];
+        }),
       ]);
 
-      if (remoteOccs) {
-        setOccurrences(remoteOccs);
-      }
-      if (remoteHierarchy) {
-        if (remoteHierarchy.platoons.length > 0) setPlatoons(remoteHierarchy.platoons);
-        if (remoteHierarchy.squads.length > 0) setSquads(remoteHierarchy.squads);
-      }
-      if (remoteNotifs) {
-        setNotifications(remoteNotifs);
-      }
-    } catch (e) {
-      console.error('Erro durante sincronização com Supabase:', e);
-    }
-  }, []);
+      setPlatoons(fetchedPlatoons);
+      setSquads(fetchedSquads);
+      setOccurrences(fetchedOccs);
+      setNotifications(fetchedNotifs);
 
-  useEffect(() => {
-    loadAllData();
+      // Derive currentUser from authenticated militar and real Supabase structure
+      const activeSquad = fetchedSquads.find(
+        s => s.id === authenticatedMilitar.squad_atual_id || s.id === authenticatedMilitar.guarnicao_id
+      );
+      const activePlatoon = fetchedPlatoons.find(
+        p => p.id === authenticatedMilitar.platoon_atual_id || p.id === authenticatedMilitar.pelotao_id
+      );
 
-    // Inscrição Realtime no Supabase para sincronização instantânea
-    const unsubscribe = subscribeToOccurrencesRealtime(() => {
-      syncOccurrencesFromSupabase().then(syncedOccs => {
-        if (syncedOccs) {
-          setOccurrences(syncedOccs);
-        }
+      const matchedUser: User = {
+        id: `user-${authenticatedMilitar.matricula}`,
+        name: authenticatedMilitar.nome_guerra,
+        rank: authenticatedMilitar.posto_graduacao,
+        role: authenticatedMilitar.perfil,
+        platoonId: activePlatoon?.id || authenticatedMilitar.platoon_atual_id || (fetchedPlatoons[0]?.id || ''),
+        squadId: authenticatedMilitar.perfil === 'GUARNICAO' ? (activeSquad?.id || authenticatedMilitar.squad_atual_id || undefined) : undefined,
+        registrationNumber: authenticatedMilitar.matricula,
+      };
+
+      setCurrentUser(matchedUser);
+
+      // Synthesize user list from squad members + militar
+      const synUsers: User[] = [matchedUser];
+      fetchedSquads.forEach(sq => {
+        sq.members?.forEach(m => {
+          if (!synUsers.some(u => u.registrationNumber === m.registrationNumber)) {
+            synUsers.push({
+              id: `user-${m.registrationNumber}`,
+              name: m.name,
+              rank: m.rank,
+              role: 'GUARNICAO',
+              platoonId: sq.platoonId,
+              squadId: sq.id,
+              registrationNumber: m.registrationNumber,
+            });
+          }
+        });
       });
+      setUsers(synUsers);
+
+    } catch (err: any) {
+      console.error('Erro crítico ao carregar dados do Supabase:', err);
+      setDataError(err?.message || String(err));
+    } finally {
+      setDataLoading(false);
+    }
+  }, [authenticatedMilitar]);
+
+  // Load data whenever authenticated militar is verified
+  useEffect(() => {
+    if (authenticatedMilitar) {
+      loadAllData();
+    }
+  }, [authenticatedMilitar, loadAllData]);
+
+  // Realtime Supabase Subscription for Instant Sync
+  useEffect(() => {
+    if (!authenticatedMilitar) return;
+
+    const unsubscribe = subscribeToOccurrencesRealtime(async () => {
+      try {
+        const syncedOccs = await fetchOccurrencesFromSupabase();
+        setOccurrences(syncedOccs);
+      } catch (e) {
+        console.warn('Erro ao sincronizar realtime:', e);
+      }
     });
 
     return () => {
       unsubscribe();
     };
-  }, [loadAllData]);
+  }, [authenticatedMilitar]);
 
   // Periodic Check for 12h/24h recurring alerts for pending unresolved tree incidents
   useEffect(() => {
-    const interval = setInterval(() => {
-      const currentOccs = getStoredOccurrences();
-      const currentNotifs = getStoredNotifications();
-      let hasNewAlert = false;
+    if (!authenticatedMilitar || dataLoading || dataError) return;
 
-      currentOccs.forEach(occ => {
-        if (occ.status === 'PENDENTE') {
-          const hours = getHoursPending(occ);
-          if (hours >= 12) {
-            const alertTag = hours >= 24 ? '24h' : '12h';
-            const notifKey = `recur-alert-${occ.id}-${alertTag}`;
-            
-            const alreadyNotified = currentNotifs.some(n => n.id.includes(notifKey));
-            if (!alreadyNotified) {
-              currentNotifs.unshift({
-                id: `${notifKey}-${Date.now()}`,
-                title: `🚨 Alerta Recorrente: ${occ.protocol} sem conclusão há ${hours}h`,
-                message: `Árvore no endereço ${occ.address} permanece pendente. Acompanhamento prioritário exigido pelo Comando do Pelotão!`,
-                type: hours >= 24 ? 'PENDING_ALERT_24H' : 'PENDING_ALERT_12H',
-                occurrenceId: occ.id,
-                occurrenceProtocol: occ.protocol,
-                targetRoles: ['COBOM', 'GUARNICAO', 'PELOTAO'],
-                targetSquadId: occ.assignedSquadId,
-                createdAt: new Date().toISOString(),
-                isRead: false
-              });
-              hasNewAlert = true;
+    const interval = setInterval(async () => {
+      try {
+        for (const occ of occurrences) {
+          if (occ.status === 'PENDENTE') {
+            const hours = getHoursPending(occ);
+            if (hours >= 12) {
+              const alertTag = hours >= 24 ? '24h' : '12h';
+              const notifKey = `recur-alert-${occ.id}-${alertTag}`;
+              
+              const alreadyNotified = notifications.some(n => n.id.includes(notifKey));
+              if (!alreadyNotified) {
+                const notif: AppNotification = {
+                  id: `${notifKey}-${Date.now()}`,
+                  title: `🚨 Alerta Recorrente: ${occ.protocol} sem conclusão há ${hours}h`,
+                  message: `Árvore no endereço ${occ.address} permanece pendente. Acompanhamento prioritário exigido pelo Comando do Pelotão!`,
+                  type: hours >= 24 ? 'PENDING_ALERT_24H' : 'PENDING_ALERT_12H',
+                  occurrenceId: occ.id,
+                  occurrenceProtocol: occ.protocol,
+                  targetRoles: ['COBOM', 'GUARNICAO', 'PELOTAO'],
+                  targetSquadId: occ.assignedSquadId,
+                  createdAt: new Date().toISOString(),
+                  isRead: false
+                };
+                await insertNotificationToSupabase(notif);
+                setNotifications(prev => [notif, ...prev]);
+              }
             }
           }
         }
-      });
-
-      if (hasNewAlert) {
-        saveNotifications(currentNotifs);
-        setNotifications([...currentNotifs]);
+      } catch (e) {
+        console.warn('Erro ao processar alertas recorrentes:', e);
       }
-    }, 45000); // Check every 45s
+    }, 60000); // Check every 60s
 
     return () => clearInterval(interval);
-  }, []);
+  }, [authenticatedMilitar, dataLoading, dataError, occurrences, notifications]);
 
   // Handle Login from Supabase Modal
   const handleLoginSuccess = (militar: MilitarUser) => {
     setAuthenticatedMilitar(militar);
-    if (militar.senha_temporaria) {
-      setRequiresPasswordChange(true);
-    } else {
-      setRequiresPasswordChange(false);
-    }
-
-    // Configura o usuário atual no perfil oficial do militar
-    const activeSquad = squads.find(s => s.id === militar.squad_atual_id || s.id === militar.guarnicao_id) || squads[0];
-    const activePlatoon = platoons.find(p => p.id === militar.platoon_atual_id || p.id === militar.pelotao_id) || platoons[0];
-
-    const matchedUser: User = {
-      id: `user-${militar.matricula}`,
-      name: militar.nome_guerra,
-      rank: militar.posto_graduacao,
-      role: militar.perfil,
-      platoonId: activePlatoon?.id || 'plat-1',
-      squadId: militar.perfil === 'GUARNICAO' ? (activeSquad?.id || squads[0]?.id) : undefined,
-      registrationNumber: militar.matricula,
-    };
-
-    setCurrentUser(matchedUser);
-    persistCurrentUser(matchedUser);
+    setRequiresPasswordChange(Boolean(militar.senha_temporaria));
   };
 
   // Handle Password Changed successfully
@@ -267,30 +273,25 @@ export default function App() {
   const handleLogout = async () => {
     await logoutMilitar();
     setAuthenticatedMilitar(null);
+    setCurrentUser(null);
     setRequiresPasswordChange(false);
+    setOccurrences([]);
+    setSquads([]);
+    setPlatoons([]);
+    setNotifications([]);
+    setDataError(null);
   };
 
   // Switch User Profile
   const handleSelectUser = (user: User) => {
-    persistCurrentUser(user);
     setCurrentUser(user);
-  };
-
-  // Reset demo data
-  const handleResetData = () => {
-    resetToSeedData();
-    loadAllData();
-    setDetailOccurrence(null);
-    setAttendanceOccurrence(null);
-    setEditOccurrence(null);
-    setIsNewOccurrenceOpen(false);
   };
 
   // Delete Occurrence (Exclusive for COBOM)
   const handleDeleteOccurrence = async (occId: string) => {
     try {
       await deleteOccurrence(occId);
-      await loadAllData();
+      setOccurrences(prev => prev.filter(o => o.id !== occId));
       if (detailOccurrence?.id === occId) {
         setDetailOccurrence(null);
       }
@@ -309,8 +310,8 @@ export default function App() {
       return;
     }
     try {
-      const updated = await setSquadInAttendance(occ.id, currentUser.squadId);
-      await loadAllData();
+      const updated = await setSquadInAttendance(occ, currentUser.squadId);
+      setOccurrences(prev => prev.map(o => o.id === updated.id ? updated : o));
       if (detailOccurrence?.id === occ.id) {
         setDetailOccurrence(updated);
       }
@@ -319,17 +320,19 @@ export default function App() {
     }
   };
 
-  // Mark notification read
-  const handleMarkNotificationAsRead = (id: string) => {
-    const updated = notifications.map(n => n.id === id ? { ...n, isRead: true } : n);
-    saveNotifications(updated);
-    setNotifications(updated);
+  // Mark notification read in memory and Supabase
+  const handleMarkNotificationAsRead = async (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    await markNotificationAsReadInSupabase(id);
   };
 
-  const handleMarkAllNotificationsAsRead = () => {
-    const updated = notifications.map(n => ({ ...n, isRead: true }));
-    saveNotifications(updated);
-    setNotifications(updated);
+  const handleMarkAllNotificationsAsRead = async () => {
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    for (const n of notifications) {
+      if (!n.isRead) {
+        await markNotificationAsReadInSupabase(n.id);
+      }
+    }
   };
 
   // Select occurrence by protocol from notifications
@@ -340,7 +343,8 @@ export default function App() {
     }
   };
 
-  if (authChecking || !currentUser) {
+  // Auth checking initial state
+  if (authChecking) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="text-center space-y-3 text-white">
@@ -368,12 +372,72 @@ export default function App() {
     );
   }
 
+  // Explicit Supabase Error Screen (No fallback to local/seed data)
+  if (dataError) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
+        <div className="bg-white rounded-xl shadow-2xl border border-red-200 p-6 max-w-lg w-full text-slate-800 space-y-4">
+          <div className="flex items-center gap-3 text-red-700 pb-3 border-b border-slate-200">
+            <div className="p-2.5 bg-red-100 rounded-lg">
+              <ShieldAlert className="w-6 h-6 text-red-700" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-base text-slate-900">Falha ao Conectar ao Supabase</h3>
+              <p className="text-xs text-red-600 font-medium">4º BBM — Santa Maria (Produção)</p>
+            </div>
+          </div>
+          
+          <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-900 space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <p className="font-semibold leading-relaxed">{dataError}</p>
+            </div>
+            <p className="text-[11px] text-slate-600 pl-6">
+              O sistema foi configurado para utilizar <strong>estritamente o Supabase</strong> como fonte de dados. Dados locais e de teste foram totalmente desativados.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+            >
+              Sair / Trocar Usuário
+            </button>
+            <button
+              onClick={loadAllData}
+              className="px-5 py-2.5 bg-red-800 hover:bg-red-700 text-white rounded-lg text-xs font-extrabold flex items-center gap-2 shadow transition-all cursor-pointer"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Tentar novamente</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Data Loading Spinner Screen
+  if (dataLoading || !currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="text-center space-y-4 max-w-md">
+          <div className="w-12 h-12 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <div className="space-y-1 text-white">
+            <h3 className="font-bold text-base">CBMRS 4º BBM — Santa Maria</h3>
+            <p className="text-xs text-slate-300">Carregando dados operacionais do Supabase...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const unreadNotifsCount = notifications.filter(n => {
     if (n.targetRoles && !n.targetRoles.includes(currentUser.role)) return false;
     return !n.isRead;
   }).length;
 
-  const currentSquad = squads.find(s => s.id === currentUser.squadId) || squads[0];
+  const currentSquad = squads.find(s => s.id === currentUser.squadId);
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans selection:bg-red-700 selection:text-white">
@@ -383,6 +447,10 @@ export default function App() {
         currentUser={currentUser}
         authenticatedMilitar={authenticatedMilitar}
         allUsers={users}
+        occurrences={occurrences}
+        squads={squads}
+        platoons={platoons}
+        notifications={notifications}
         unreadNotificationsCount={unreadNotifsCount}
         activeMainTab={activeMainTab}
         onChangeMainTab={setActiveMainTab}
@@ -394,7 +462,7 @@ export default function App() {
         onOpenPopViewer={() => setIsPopViewerOpen(true)}
         onOpenDetailedReport={() => setIsDetailedReportOpen(true)}
         onOpenMilitaryManagement={() => setIsMilitaryManagementOpen(true)}
-        onResetData={handleResetData}
+        onRefreshData={loadAllData}
         onLogout={handleLogout}
       />
 
@@ -411,7 +479,7 @@ export default function App() {
               {currentUser.role === 'COBOM' 
                 ? 'Central de Despacho 193 (Criação, empenho de guarnições e edição geral)' 
                 : currentUser.role === 'GUARNICAO'
-                  ? `Viatura: ${currentSquad.name} (Atendimentos em campo, registro de desfecho e fotos)`
+                  ? (currentSquad ? `Viatura: ${currentSquad.name} (Atendimentos em campo, registro de desfecho e fotos)` : 'Perfil Guarnição (Nenhuma VTR vinculada)')
                   : 'Acompanhamento Estratégico do Pelotão (Histórico, estatísticas e linha do tempo)'}
             </span>
           </div>
@@ -499,7 +567,7 @@ export default function App() {
           onDeleteOccurrence={handleDeleteOccurrence}
           onUpdateOccurrence={(updated) => {
             setDetailOccurrence(updated);
-            loadAllData();
+            setOccurrences(prev => prev.map(o => o.id === updated.id ? updated : o));
           }}
         />
       )}
@@ -508,12 +576,22 @@ export default function App() {
       {attendanceOccurrence && (
         <AttendanceFormModal
           occurrence={attendanceOccurrence}
-          currentSquad={currentSquad}
+          currentSquad={currentSquad || {
+            id: currentUser.squadId || '',
+            name: 'Guarnição de Serviço',
+            callSign: 'VTR',
+            unitText: '4º BBM',
+            commanderName: `${currentUser.rank} ${currentUser.name}`,
+            currentShift: 'Turno 24h',
+            status: 'DISPONIVEL',
+            activeMembersCount: 1,
+            platoonId: currentUser.platoonId
+          }}
           currentUser={currentUser}
           onClose={() => setAttendanceOccurrence(null)}
           onSuccess={(updatedOcc) => {
             setAttendanceOccurrence(null);
-            loadAllData();
+            setOccurrences(prev => prev.map(o => o.id === updatedOcc.id ? updatedOcc : o));
             setDetailOccurrence(updatedOcc);
           }}
         />
@@ -534,7 +612,10 @@ export default function App() {
           onSaved={(savedOcc) => {
             setIsNewOccurrenceOpen(false);
             setEditOccurrence(null);
-            loadAllData();
+            setOccurrences(prev => {
+              const exists = prev.some(o => o.id === savedOcc.id);
+              return exists ? prev.map(o => o.id === savedOcc.id ? savedOcc : o) : [savedOcc, ...prev];
+            });
             setDetailOccurrence(savedOcc);
           }}
         />

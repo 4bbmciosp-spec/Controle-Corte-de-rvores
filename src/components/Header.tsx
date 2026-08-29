@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, UserRole } from '../types';
+import { User, UserRole, Occurrence, Squad, Platoon, AppNotification } from '../types';
 import { 
   Shield, 
   Flame, 
@@ -28,6 +28,10 @@ interface HeaderProps {
   currentUser: User;
   authenticatedMilitar?: MilitarUser | null;
   allUsers: User[];
+  occurrences?: Occurrence[];
+  squads?: Squad[];
+  platoons?: Platoon[];
+  notifications?: AppNotification[];
   unreadNotificationsCount: number;
   activeMainTab: 'OPERATIONAL' | 'REPORTS';
   onChangeMainTab: (tab: 'OPERATIONAL' | 'REPORTS') => void;
@@ -39,7 +43,8 @@ interface HeaderProps {
   onOpenPopViewer: () => void;
   onOpenDetailedReport: () => void;
   onOpenMilitaryManagement?: () => void;
-  onResetData: () => void;
+  onRefreshData?: () => void;
+  onResetData?: () => void;
   onLogout?: () => void;
 }
 
@@ -47,6 +52,10 @@ export const Header: React.FC<HeaderProps> = ({
   currentUser,
   authenticatedMilitar,
   allUsers,
+  occurrences = [],
+  squads = [],
+  platoons = [],
+  notifications = [],
   unreadNotificationsCount,
   activeMainTab,
   onChangeMainTab,
@@ -58,13 +67,20 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenPopViewer,
   onOpenDetailedReport,
   onOpenMilitaryManagement,
+  onRefreshData,
   onResetData,
   onLogout,
 }) => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   const handleExportJson = () => {
-    const data = exportDatabaseBackup();
+    const data = exportDatabaseBackup({
+      occurrences,
+      platoons,
+      squads,
+      users: allUsers,
+      notifications,
+    });
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -73,6 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const getRoleBadge = (role: UserRole) => {
@@ -356,15 +373,17 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                       <button
                         onClick={() => {
-                          if (confirm('Deseja limpar os dados e redefinir o estado operacional do sistema?')) {
+                          if (onRefreshData) {
+                            onRefreshData();
+                          } else if (onResetData) {
                             onResetData();
-                            setShowProfileMenu(false);
                           }
+                          setShowProfileMenu(false);
                         }}
                         className="text-red-700 hover:text-red-800 font-semibold flex items-center gap-1 py-1 cursor-pointer"
                       >
                         <RefreshCw className="w-3.5 h-3.5" />
-                        <span>Limpar / Resetar</span>
+                        <span>Sincronizar Supabase</span>
                       </button>
                     </div>
                   </div>
