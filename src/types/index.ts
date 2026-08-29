@@ -76,7 +76,8 @@ export interface SquadMember {
   rank?: string;
   roleInSquad: string; // ex: "COMANDANTE DE GUARNIÇÃO", "COV / OPERADOR / CONDUTOR"
   isCommander?: boolean;
-  shiftHours?: number; // 12 ou 24
+  isExplicitE193Cg?: boolean;
+  shiftHours?: number; // 6, 8, 12 ou 24
   shiftStart?: string;
   shiftEnd?: string;
 }
@@ -112,6 +113,10 @@ export interface AttendanceRecord {
   squadName: string;
   callSign: string;
   commanderName: string;
+  militarResponsavelId?: string; // CG no momento do despacho
+  militarResponsavelName?: string;
+  preenchidoPorId?: string; // Militar logado que digitou
+  preenchidoPorName?: string;
   shiftInfo: string;
   startedAt: string;
   finishedAt: string;
@@ -144,6 +149,8 @@ export interface Occurrence {
   treeRisk: TreeRiskType;
   platoonId: string;
   assignedSquadId: string;
+  cgGuarnicaoDespachoId?: string; // Snapshot do CG no momento do despacho
+  cgGuarnicaoDespachoName?: string;
   status: OccurrenceStatus;
   urgency: OccurrenceUrgency;
   initialPhotos: OccurrencePhoto[];
@@ -151,6 +158,18 @@ export interface Occurrence {
   isCarriedOver: boolean; // Se veio de turno anterior
   totalAttendancesCount: number;
   lastAttendanceAt?: string;
+}
+
+export interface TimelineEvent {
+  id: string;
+  timestamp: string;
+  type: 'DESPACHO' | 'INICIO_ATENDIMENTO' | 'FINALIZACAO' | 'PENDENCIA' | 'FOTO';
+  title: string;
+  description: string;
+  squadCallSign?: string;
+  cgName?: string;
+  cgRank?: string;
+  photos?: OccurrencePhoto[];
 }
 
 export interface AppNotification {

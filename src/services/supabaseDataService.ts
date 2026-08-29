@@ -11,8 +11,16 @@ import {
   OccurrenceUrgency,
   OccurrenceType,
   TreeRiskType,
-  UnresolvedReason
+  UnresolvedReason,
+  TimelineEvent
 } from '../types';
+import {
+  determinarCgPorIntervalo,
+  normalizarPosto,
+  pesoHierarquico,
+  compararAntiguidade,
+  EscalaCandidate
+} from './commandHierarchyService';
 
 /**
  * Validador e gerador de UUID v4 seguro
@@ -251,7 +259,8 @@ export async function assignMilitarToSquad(
 }
 
 /**
- * Registra a escala de serviço completa no Supabase
+ * Registra a escala de serviço completa no Supabase na tabela 'escalas_servico'
+ * e atualiza o estado atual das guarnições e militares com determinação precisa de CG.
  */
 export async function registerEscalaServico(
   squads: Squad[],
@@ -263,6 +272,13 @@ export async function registerEscalaServico(
   let squadsOk = 0;
   let membersOk = 0;
 
+  // Define horários padrão de plantão de 24h (hoje 08:00 até amanhã 08:00)
+  const now = new Date();
+  const defaultStart = new Date(now);
+  defaultStart.setHours(8, 0, 0, 0);
+  const defaultEnd = new Date(defaultStart);
+  defaultEnd.setDate(defaultEnd.getDate() + 1);
+
   for (const squad of squads) {
     let realSquad: Squad;
     try {
@@ -273,27 +289,251 @@ export async function registerEscalaServico(
       continue; // sem guarnição real, não há como vincular os militares dela
     }
 
-    if (squad.members && squad.members.length > 0) {
-      for (const member of squad.members) {
-        if (member.registrationNumber && /^\d+$/.test(member.registrationNumber.trim())) {
-          try {
-            await assignMilitarToSquad(
-              member.registrationNumber,
-              realSquad.id,
-              realSquad.platoonId,
-              member.roleInSquad,
-              member.roleInSquad?.toUpperCase().includes('COMANDANTE') || squad.commanderName === member.name
-            );
-            membersOk++;
-          } catch (err: any) {
-            errors.push(`Militar ${member.registrationNumber} (${member.name}) na guarnição ${squad.callSign}: ${err?.message || 'erro desconhecido'}`);
-          }
-        }
+    if (!squad.members || squad.members.length === 0) {
+      continue;
+    }
+
+    // 1. Busca todos os militares da guarnição na tabela 'militares'
+    const matriculas = squad.members
+      .map(m => m.registrationNumber?.replace(/\D/g, '').trim())
+      .filter(Boolean);
+
+    if (matriculas.length === 0) continue;
+
+    const { data: militaresRows, error: milError } = await supabase
+      .from('militares')
+      .select('id, matricula, posto_graduacao, nome_guerra, is_comandante, squad_atual_id')
+      .in('matricula', matriculas);
+
+    if (milError) {
+      errors.push(`Guarnição ${squad.callSign}: Falha ao buscar militares: ${milError.message}`);
+      continue;
+    }
+
+    const milMap = new Map<string, any>();
+    (militaresRows || []).forEach(m => {
+      milMap.set(m.matricula, m);
+    });
+
+    // 2. Monta lista de candidatos para determinação de CG
+    const candidates: EscalaCandidate[] = [];
+    const memberDetails: { member: SquadMember; militarDb: any; inicioTurno: string; fimTurno: string; cargaHoraria: number }[] = [];
+
+    for (const member of squad.members) {
+      const cleanMat = member.registrationNumber?.replace(/\D/g, '').trim();
+      if (!cleanMat) continue;
+
+      const milDb = milMap.get(cleanMat);
+      if (!milDb) {
+        errors.push(`Militar ${member.registrationNumber} (${member.name}) na guarnição ${squad.callSign}: Não encontrado na tabela 'militares'.`);
+        continue;
       }
+
+      const inicioTurno = member.shiftStart || defaultStart.toISOString();
+      const fimTurno = member.shiftEnd || defaultEnd.toISOString();
+      const cargaHoraria = member.shiftHours && [6, 8, 12, 24].includes(member.shiftHours) ? member.shiftHours : 24;
+
+      const isExplicitE193 = Boolean(
+        member.isExplicitE193Cg || 
+        member.roleInSquad?.toUpperCase().includes('COMANDANTE DE GUARNI') ||
+        member.roleInSquad?.toUpperCase().includes('COMANDANTE') ||
+        member.isCommander
+      );
+
+      candidates.push({
+        militarId: milDb.id,
+        matricula: milDb.matricula,
+        postoGraduacao: milDb.posto_graduacao || member.rank || 'SD',
+        nomeGuerra: milDb.nome_guerra || member.name,
+        funcao: member.roleInSquad || 'COMBATENTE',
+        isExplicitE193Cg: isExplicitE193,
+        inicioTurno,
+        fimTurno,
+      });
+
+      memberDetails.push({
+        member,
+        militarDb: milDb,
+        inicioTurno,
+        fimTurno,
+        cargaHoraria,
+      });
+    }
+
+    // 3. Aplica algoritmo de determinação de CG
+    const cgResults = determinarCgPorIntervalo(candidates);
+    let chosenCgName = '';
+
+    // 4. Grava em 'escalas_servico' e atualiza 'militares'
+    for (const detail of memberDetails) {
+      const { member, militarDb, inicioTurno, fimTurno, cargaHoraria } = detail;
+      const cgDecision = cgResults.get(militarDb.id) || {
+        isCg: false,
+        cgDefinidoExplicitamente: false,
+        motivo: 'INDEFINIDO' as const,
+      };
+
+      if (cgDecision.isCg) {
+        chosenCgName = `${militarDb.posto_graduacao} ${militarDb.nome_guerra}`;
+      }
+
+      try {
+        // Insere na tabela 'escalas_servico'
+        const escalaPayload = {
+          id: ensureUUID(),
+          militar_id: militarDb.id,
+          squad_id: realSquad.id,
+          platoon_id: realSquad.platoonId && realSquad.platoonId.length > 20 ? realSquad.platoonId : null,
+          funcao_na_guarnicao: member.roleInSquad || 'COMBATENTE',
+          carga_horaria_horas: cargaHoraria,
+          inicio_turno: inicioTurno,
+          fim_turno: fimTurno,
+          is_cg: cgDecision.isCg,
+          cg_definido_explicitamente: cgDecision.cgDefinidoExplicitamente,
+          created_at: new Date().toISOString(),
+        };
+
+        const { error: escalaError } = await supabase
+          .from('escalas_servico')
+          .insert(escalaPayload);
+
+        if (escalaError) {
+          // Se houver erro na inserção da escala, registra nos logs mas prossegue para atualizar estado do militar
+          console.warn(`Aviso ao inserir em escalas_servico para militar ${militarDb.matricula}:`, escalaError.message);
+        }
+
+        // Atualiza tabela 'militares' com vínculo e função
+        await assignMilitarToSquad(
+          militarDb.matricula,
+          realSquad.id,
+          realSquad.platoonId,
+          member.roleInSquad || 'COMBATENTE',
+          cgDecision.isCg
+        );
+
+        membersOk++;
+      } catch (err: any) {
+        errors.push(`Militar ${militarDb.matricula} (${member.name}) na guarnição ${squad.callSign}: ${err?.message || 'erro desconhecido'}`);
+      }
+    }
+
+    // 5. Atualiza comandante da viatura na tabela squads se identificado
+    if (chosenCgName) {
+      await supabase
+        .from('squads')
+        .update({ commander_name: chosenCgName, active_members_count: memberDetails.length })
+        .eq('id', realSquad.id);
     }
   }
 
   return { squadsOk, membersOk, errors };
+}
+
+/**
+ * Busca o Comandante de Guarnição (CG) ativo para uma guarnição em um dado instante temporal.
+ * Fonte primária: 'escalas_servico'
+ * Fallback: 'militares' vinculado à guarnição
+ */
+export async function getActiveCgForSquadAtTime(
+  squadId: string,
+  timestamp?: string
+): Promise<{ militarId: string | null; name: string; rank: string; matricula: string }> {
+  if (!isSupabaseConfigured() || !squadId) {
+    return { militarId: null, name: 'Comandante da VTR', rank: 'SGT', matricula: '' };
+  }
+
+  const targetTime = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString();
+
+  try {
+    // 1. Consulta tabela 'escalas_servico'
+    const { data: escalaData, error: escalaErr } = await supabase
+      .from('escalas_servico')
+      .select('militar_id, is_cg, inicio_turno, fim_turno, militares(id, matricula, posto_graduacao, nome_guerra)')
+      .eq('squad_id', squadId)
+      .eq('is_cg', true)
+      .lte('inicio_turno', targetTime)
+      .gte('fim_turno', targetTime)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!escalaErr && escalaData && escalaData.militares) {
+      const m = escalaData.militares as any;
+      return {
+        militarId: m.id,
+        name: `${m.posto_graduacao} ${m.nome_guerra}`,
+        rank: m.posto_graduacao,
+        matricula: m.matricula,
+      };
+    }
+
+    // 2. Fallback: busca na tabela 'militares' vinculados à guarnição
+    const { data: milData, error: milErr } = await supabase
+      .from('militares')
+      .select('id, matricula, posto_graduacao, nome_guerra, is_comandante')
+      .eq('squad_atual_id', squadId);
+
+    if (!milErr && milData && milData.length > 0) {
+      // Prioriza quem tem is_comandante = true
+      const cmd = milData.find(m => m.is_comandante);
+      if (cmd) {
+        return {
+          militarId: cmd.id,
+          name: `${cmd.posto_graduacao} ${cmd.nome_guerra}`,
+          rank: cmd.posto_graduacao,
+          matricula: cmd.matricula,
+        };
+      }
+
+      // Senão ordena por antiguidade
+      const sorted = [...milData].sort((a, b) => compararAntiguidade(
+        { posto_graduacao: a.posto_graduacao, matricula: a.matricula },
+        { posto_graduacao: b.posto_graduacao, matricula: b.matricula }
+      ));
+      const highest = sorted[sorted.length - 1];
+      if (highest) {
+        return {
+          militarId: highest.id,
+          name: `${highest.posto_graduacao} ${highest.nome_guerra}`,
+          rank: highest.posto_graduacao,
+          matricula: highest.matricula,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso ao buscar CG ativo da guarnição:', err);
+  }
+
+  return { militarId: null, name: 'Comandante da VTR', rank: 'SGT', matricula: '' };
+}
+
+/**
+ * Registra auditoria de alteração manual de CG na tabela 'militares_auditoria'
+ */
+export async function logCgManualChangeInAuditoria(
+  militarId: string,
+  valorAnterior: string,
+  valorNovo: string,
+  alteradoPorAuthUserId?: string
+): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+
+  try {
+    const payload = {
+      id: ensureUUID(),
+      militar_id: ensureUUID(militarId),
+      campo: 'is_comandante',
+      valor_anterior: valorAnterior,
+      valor_novo: valorNovo,
+      origem: 'EDICAO_MANUAL',
+      alterado_por: alteradoPorAuthUserId ? ensureUUID(alteradoPorAuthUserId) : null,
+      alterado_em: new Date().toISOString(),
+    };
+
+    await supabase.from('militares_auditoria').insert(payload);
+  } catch (err) {
+    console.warn('Aviso ao registrar auditoria de CG:', err);
+  }
 }
 
 /**
@@ -363,10 +603,21 @@ export async function fetchOccurrencesFromSupabase(): Promise<Occurrence[]> {
     throw new Error(`Erro ao consultar tabela 'fotos' no Supabase: ${photoError.message}`);
   }
 
-  // 4. Busca guarnições para mapeamento dos nomes de viaturas e comandantes
+  // 4. Busca guarnições e militares para mapeamento de nomes, viaturas e CGs
   const { data: squadRows } = await supabase
     .from('squads')
     .select('id, name, call_sign, commander_name, current_shift');
+
+  const { data: milRows } = await supabase
+    .from('militares')
+    .select('id, matricula, posto_graduacao, nome_guerra');
+
+  const militarMap = new Map<string, string>();
+  if (milRows) {
+    milRows.forEach(m => {
+      militarMap.set(m.id, `${m.posto_graduacao} ${m.nome_guerra}`);
+    });
+  }
 
   const squadMap = new Map<string, { name: string; callSign: string; commanderName: string; currentShift: string }>();
   if (squadRows) {
@@ -412,13 +663,20 @@ export async function fetchOccurrencesFromSupabase(): Promise<Occurrence[]> {
   const attendancesByOcc = new Map<string, AttendanceRecord[]>();
   (attRows || []).forEach(a => {
     const squadInfo = squadMap.get(a.squad_id);
+    const cgSnapshotName = a.militar_responsavel_id ? militarMap.get(a.militar_responsavel_id) : undefined;
+    const preenchidoPorName = a.preenchido_por_id ? militarMap.get(a.preenchido_por_id) : undefined;
+
     const attObj: AttendanceRecord = {
       id: a.id,
       occurrenceId: a.ocorrencia_id,
       squadId: a.squad_id,
       squadName: squadInfo?.name || 'Guarnição Empenhada',
       callSign: squadInfo?.callSign || 'VTR',
-      commanderName: squadInfo?.commanderName || 'Comandante da VTR',
+      commanderName: cgSnapshotName || squadInfo?.commanderName || 'Comandante da VTR',
+      militarResponsavelId: a.militar_responsavel_id || undefined,
+      militarResponsavelName: cgSnapshotName,
+      preenchidoPorId: a.preenchido_por_id || undefined,
+      preenchidoPorName: preenchidoPorName,
       shiftInfo: squadInfo?.currentShift || 'Turno Operacional',
       startedAt: a.iniciado_em || a.created_at,
       finishedAt: a.finalizado_em || a.iniciado_em || a.created_at,
@@ -439,6 +697,7 @@ export async function fetchOccurrencesFromSupabase(): Promise<Occurrence[]> {
   return occRows.map(row => {
     const occAttendances = attendancesByOcc.get(row.id) || [];
     const occInitialPhotos = initialPhotosByOcc.get(row.id) || [];
+    const cgDespachoName = row.cg_guarnicao_despacho_id ? militarMap.get(row.cg_guarnicao_despacho_id) : undefined;
 
     return {
       id: row.id,
@@ -462,6 +721,8 @@ export async function fetchOccurrencesFromSupabase(): Promise<Occurrence[]> {
       treeRisk: row.risco_arvore as TreeRiskType,
       platoonId: row.platoon_id || '',
       assignedSquadId: row.squad_id || '',
+      cgGuarnicaoDespachoId: row.cg_guarnicao_despacho_id || undefined,
+      cgGuarnicaoDespachoName: cgDespachoName,
       status: row.status as OccurrenceStatus,
       urgency: row.urgencia as OccurrenceUrgency,
       initialPhotos: occInitialPhotos,
@@ -501,6 +762,7 @@ export async function insertOccurrenceToSupabase(occ: Occurrence, militarUuid?: 
     urgencia: occ.urgency || 'MEDIA',
     platoon_id: occ.platoonId && occ.platoonId.includes('-') && occ.platoonId.length > 20 ? occ.platoonId : null,
     squad_id: occ.assignedSquadId && occ.assignedSquadId.includes('-') && occ.assignedSquadId.length > 20 ? occ.assignedSquadId : null,
+    cg_guarnicao_despacho_id: occ.cgGuarnicaoDespachoId && occ.cgGuarnicaoDespachoId.includes('-') && occ.cgGuarnicaoDespachoId.length > 20 ? occ.cgGuarnicaoDespachoId : null,
     status: occ.status || 'ABERTA',
     is_carried_over: Boolean(occ.isCarriedOver),
     total_atendimentos: 0,
@@ -570,6 +832,7 @@ export async function updateOccurrenceInSupabase(occ: Occurrence): Promise<void>
     urgencia: occ.urgency || 'MEDIA',
     platoon_id: occ.platoonId && occ.platoonId.includes('-') && occ.platoonId.length > 20 ? occ.platoonId : null,
     squad_id: occ.assignedSquadId && occ.assignedSquadId.includes('-') && occ.assignedSquadId.length > 20 ? occ.assignedSquadId : null,
+    cg_guarnicao_despacho_id: occ.cgGuarnicaoDespachoId && occ.cgGuarnicaoDespachoId.includes('-') && occ.cgGuarnicaoDespachoId.length > 20 ? occ.cgGuarnicaoDespachoId : null,
     status: occ.status,
     is_carried_over: Boolean(occ.isCarriedOver),
     total_atendimentos: occ.totalAttendancesCount || (occ.attendances ? occ.attendances.length : 0),
@@ -590,22 +853,32 @@ export async function updateOccurrenceInSupabase(occ: Occurrence): Promise<void>
 /**
  * Registra um atendimento na tabela 'atendimentos', insere suas fotos na tabela 'fotos'
  * e atualiza o status/estatísticas da ocorrência na tabela 'ocorrencias'.
+ * 
+ * Regra do Sistema:
+ * - militar_responsavel_id: Snapshot do Comandante de Guarnição (CG) despachado no momento do atendimento.
+ * - preenchido_por_id: ID do militar autenticado que está enviando o formulário.
  */
 export async function recordAttendanceInSupabase(
   occurrenceId: string,
   record: AttendanceRecord,
-  militarUuid?: string
+  cgMilitarId?: string,
+  preenchidoPorId?: string
 ): Promise<AttendanceRecord> {
   if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
 
   const occId = ensureUUID(occurrenceId);
   const attId = ensureUUID(record.id);
 
+  // Se cgMilitarId não foi passado diretamente, tenta obter de record.militarResponsavelId
+  const finalCgId = cgMilitarId || record.militarResponsavelId || null;
+  const finalPreenchidoPorId = preenchidoPorId || record.preenchidoPorId || null;
+
   const atendimentoPayload = {
     id: attId,
     ocorrencia_id: occId,
     squad_id: record.squadId && record.squadId.includes('-') && record.squadId.length > 20 ? record.squadId : null,
-    militar_responsavel_id: militarUuid ? ensureUUID(militarUuid) : null,
+    militar_responsavel_id: finalCgId && finalCgId.includes('-') && finalCgId.length > 20 ? ensureUUID(finalCgId) : null,
+    preenchido_por_id: finalPreenchidoPorId && finalPreenchidoPorId.includes('-') && finalPreenchidoPorId.length > 20 ? ensureUUID(finalPreenchidoPorId) : null,
     iniciado_em: record.startedAt || new Date().toISOString(),
     finalizado_em: record.finishedAt || new Date().toISOString(),
     status_resultado: record.statusResult,
@@ -668,7 +941,128 @@ export async function recordAttendanceInSupabase(
     ...record,
     id: attId,
     occurrenceId: occId,
+    militarResponsavelId: finalCgId || undefined,
+    preenchidoPorId: finalPreenchidoPorId || undefined,
   };
+}
+
+/**
+ * Constrói a Linha do Tempo (Timeline) cronológica completa de uma ocorrência
+ */
+export async function buildOccurrenceTimeline(occurrenceId: string): Promise<TimelineEvent[]> {
+  if (!isSupabaseConfigured()) return [];
+
+  const occId = ensureUUID(occurrenceId);
+  const events: TimelineEvent[] = [];
+
+  try {
+    // 1. Busca ocorrência com dados de criação e CG de despacho
+    const { data: occData } = await supabase
+      .from('ocorrencias')
+      .select('*, squads(name, call_sign), militares:cg_guarnicao_despacho_id(posto_graduacao, nome_guerra)')
+      .eq('id', occId)
+      .maybeSingle();
+
+    if (occData) {
+      const squadInfo = occData.squads as any;
+      const cgInfo = occData.militares as any;
+
+      events.push({
+        id: `event-created-${occData.id}`,
+        timestamp: occData.created_at,
+        type: 'DESPACHO',
+        title: `🚨 Ocorrência Gerada e Despachada`,
+        description: `Protocolo ${occData.protocolo} registrado no COBOM. Natureza: ${occData.natureza_despacho || occData.tipo}.`,
+        squadCallSign: squadInfo?.call_sign || 'COBOM',
+        cgName: cgInfo ? `${cgInfo.posto_graduacao} ${cgInfo.nome_guerra}` : undefined,
+        cgRank: cgInfo?.posto_graduacao,
+      });
+    }
+
+    // 2. Busca atendimentos com dados do CG e fotos
+    const { data: attData } = await supabase
+      .from('atendimentos')
+      .select('*, squads(name, call_sign), militares:militar_responsavel_id(posto_graduacao, nome_guerra), preenchido:preenchido_por_id(posto_graduacao, nome_guerra)')
+      .eq('ocorrencia_id', occId)
+      .order('iniciado_em', { ascending: true });
+
+    const { data: photoData } = await supabase
+      .from('fotos')
+      .select('*')
+      .eq('ocorrencia_id', occId);
+
+    const photosByAtt = new Map<string, OccurrencePhoto[]>();
+    (photoData || []).forEach(p => {
+      if (p.atendimento_id) {
+        const list = photosByAtt.get(p.atendimento_id) || [];
+        list.push({
+          id: p.id,
+          occurrenceId: p.ocorrencia_id,
+          attendanceId: p.atendimento_id,
+          url: p.url_arquivo,
+          caption: p.legenda || '',
+          uploadedAt: p.enviado_em,
+          uploadedBySquadName: 'Guarnição',
+          stage: p.etapa as any,
+        });
+        photosByAtt.set(p.atendimento_id, list);
+      }
+    });
+
+    (attData || []).forEach(att => {
+      const squadInfo = att.squads as any;
+      const cgInfo = att.militares as any;
+      const preenchidoInfo = att.preenchido as any;
+      const attPhotos = photosByAtt.get(att.id) || [];
+
+      // Início do Atendimento
+      events.push({
+        id: `event-start-${att.id}`,
+        timestamp: att.iniciado_em || att.created_at,
+        type: 'INICIO_ATENDIMENTO',
+        title: `🚒 Chegada da Guarnição no Local`,
+        description: `Viatura ${squadInfo?.call_sign || 'VTR'} iniciou os trabalhos operacionais. Comandante de Guarnição: ${cgInfo ? `${cgInfo.posto_graduacao} ${cgInfo.nome_guerra}` : 'CG Designado'}.`,
+        squadCallSign: squadInfo?.call_sign,
+        cgName: cgInfo ? `${cgInfo.posto_graduacao} ${cgInfo.nome_guerra}` : undefined,
+        cgRank: cgInfo?.posto_graduacao,
+      });
+
+      // Desfecho do Atendimento
+      if (att.status_resultado === 'CONCLUIDA') {
+        events.push({
+          id: `event-finish-${att.id}`,
+          timestamp: att.finalizado_em || att.iniciado_em,
+          type: 'FINALIZACAO',
+          title: `✅ Corte/Vistoria Concluído com Sucesso`,
+          description: `Ação realizada: ${att.acao_realizada || 'Corte e desobstrução realizados com segurança'}. Registrado por: ${preenchidoInfo ? `${preenchidoInfo.posto_graduacao} ${preenchidoInfo.nome_guerra}` : 'Operador'}.`,
+          squadCallSign: squadInfo?.call_sign,
+          cgName: cgInfo ? `${cgInfo.posto_graduacao} ${cgInfo.nome_guerra}` : undefined,
+          cgRank: cgInfo?.posto_graduacao,
+          photos: attPhotos,
+        });
+      } else {
+        events.push({
+          id: `event-pendente-${att.id}`,
+          timestamp: att.finalizado_em || att.iniciado_em,
+          type: 'PENDENCIA',
+          title: `⚠️ Atendimento Pendente / Repassado para Próximo Turno`,
+          description: `Motivo: ${att.motivo_nao_concluida || 'Não concluída'}. Detalhes: ${att.detalhes_nao_concluida || 'Aguardando apoio/recursos'}. Registrado por: ${preenchidoInfo ? `${preenchidoInfo.posto_graduacao} ${preenchidoInfo.nome_guerra}` : 'Operador'}.`,
+          squadCallSign: squadInfo?.call_sign,
+          cgName: cgInfo ? `${cgInfo.posto_graduacao} ${cgInfo.nome_guerra}` : undefined,
+          cgRank: cgInfo?.posto_graduacao,
+          photos: attPhotos,
+        });
+      }
+    });
+
+  } catch (err) {
+    console.warn('Aviso ao construir linha do tempo da ocorrência:', err);
+  }
+
+  // Ordena eventos por timestamp cronológico crescente
+  events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  return events;
 }
 
 /**

@@ -18,14 +18,21 @@ import {
   deleteSquadFromSupabase,
   assignMilitarToSquad,
   registerEscalaServico,
+  getActiveCgForSquadAtTime,
+  logCgManualChangeInAuditoria,
+  buildOccurrenceTimeline,
   ensureUUID,
 } from './supabaseDataService';
+import { normalizarPosto } from './commandHierarchyService';
 
 export {
   upsertSquadToSupabase,
   deleteSquadFromSupabase,
   assignMilitarToSquad,
   registerEscalaServico,
+  getActiveCgForSquadAtTime,
+  logCgManualChangeInAuditoria,
+  buildOccurrenceTimeline,
 };
 
 /**
@@ -105,16 +112,34 @@ export async function recordAttendance(
   militarUuid?: string
 ): Promise<Occurrence> {
   const recordId = ensureUUID();
+
+  // 1. Busca a ocorrência para verificar o snapshot do CG de despacho
+  const occs = await fetchOccurrencesFromSupabase();
+  const currentOcc = occs.find(o => o.id === occurrenceId);
+
+  let cgMilitarId = currentOcc?.cgGuarnicaoDespachoId;
+  if (!cgMilitarId && record.squadId) {
+    // Se não tiver snapshot prévio, consulta o CG da guarnição no momento do início do atendimento
+    const cgInfo = await getActiveCgForSquadAtTime(record.squadId, record.startedAt);
+    if (cgInfo.militarId) {
+      cgMilitarId = cgInfo.militarId;
+    }
+  }
+
+  const preenchidoPorId = militarUuid || (user.id && user.id.includes('-') && user.id.length > 20 ? user.id : undefined);
+
   const fullRecord: AttendanceRecord = {
     ...record,
     id: recordId,
     occurrenceId,
+    militarResponsavelId: cgMilitarId || undefined,
+    preenchidoPorId: preenchidoPorId || undefined,
   };
 
-  // 1. Grava no Supabase
-  await recordAttendanceInSupabase(occurrenceId, fullRecord, militarUuid);
+  // 2. Grava no Supabase
+  await recordAttendanceInSupabase(occurrenceId, fullRecord, cgMilitarId, preenchidoPorId);
 
-  // 2. Notificação
+  // 3. Notificação
   const notif: AppNotification = {
     id: ensureUUID(),
     title: record.statusResult === 'CONCLUIDA'
@@ -125,7 +150,7 @@ export async function recordAttendance(
       : `A ${record.squadName} registrou atendimento pendente. Motivo: ${record.unresolvedReason || 'Operacional'}.`,
     type: record.statusResult === 'CONCLUIDA' ? 'STATUS_CHANGE' : 'CRITICAL_UNRESOLVED',
     occurrenceId: occurrenceId,
-    occurrenceProtocol: '',
+    occurrenceProtocol: currentOcc?.protocol || '',
     targetRoles: ['COBOM', 'PELOTAO', 'GUARNICAO'],
     targetSquadId: record.squadId,
     createdAt: new Date().toISOString(),
@@ -134,8 +159,8 @@ export async function recordAttendance(
 
   await insertNotificationToSupabase(notif);
 
-  const occs = await fetchOccurrencesFromSupabase();
-  const found = occs.find(o => o.id === occurrenceId);
+  const updatedOccs = await fetchOccurrencesFromSupabase();
+  const found = updatedOccs.find(o => o.id === occurrenceId);
   if (found) return found;
 
   throw new Error(`Ocorrência ${occurrenceId} atualizada no Supabase mas não localizada na listagem.`);
@@ -143,6 +168,7 @@ export async function recordAttendance(
 
 /**
  * Atualiza status para 'EM_ATENDIMENTO' quando a guarnição desloca/chega no local
+ * e captura o snapshot do Comandante de Guarnição (CG) no momento do despacho.
  */
 export async function setSquadInAttendance(
   occurrenceOrId: Occurrence | string,
@@ -150,12 +176,18 @@ export async function setSquadInAttendance(
 ): Promise<Occurrence> {
   const occId = typeof occurrenceOrId === 'string' ? occurrenceOrId : occurrenceOrId.id;
 
+  // Busca snapshot do CG ativo da guarnição agora
+  const nowIso = new Date().toISOString();
+  const cgInfo = await getActiveCgForSquadAtTime(squadId, nowIso);
+
   if (typeof occurrenceOrId === 'object') {
     const updatedOcc: Occurrence = {
       ...occurrenceOrId,
       status: 'EM_ATENDIMENTO',
       assignedSquadId: squadId,
-      updatedAt: new Date().toISOString(),
+      cgGuarnicaoDespachoId: cgInfo.militarId || occurrenceOrId.cgGuarnicaoDespachoId,
+      cgGuarnicaoDespachoName: cgInfo.militarId ? cgInfo.name : occurrenceOrId.cgGuarnicaoDespachoName,
+      updatedAt: nowIso,
     };
     await updateOccurrenceInSupabase(updatedOcc);
     return updatedOcc;
@@ -172,7 +204,9 @@ export async function setSquadInAttendance(
     ...found,
     status: 'EM_ATENDIMENTO',
     assignedSquadId: squadId,
-    updatedAt: new Date().toISOString(),
+    cgGuarnicaoDespachoId: cgInfo.militarId || found.cgGuarnicaoDespachoId,
+    cgGuarnicaoDespachoName: cgInfo.militarId ? cgInfo.name : found.cgGuarnicaoDespachoName,
+    updatedAt: nowIso,
   };
 
   await updateOccurrenceInSupabase(updatedOcc);
@@ -189,7 +223,8 @@ export function getHoursPending(occ: Occurrence): number {
 }
 
 /**
- * Processamento e importação de escala do e-193 em memória
+ * Processamento e importação de escala do e-193 em memória com extração de turnos,
+ * funções e indicadores explícitos de Comandante de Guarnição (CG).
  */
 export function parseAndRegisterE193Roster(
   rawText: string,
@@ -221,7 +256,7 @@ export function parseAndRegisterE193Roster(
       continue;
     }
 
-    // Identifica Viatura (ex: ABT-1496, ABTR-1102)
+    // Identifica Viatura (ex: ABT-1496, ABTR-1102, ABC-794)
     const vtrMatch = line.match(/^([A-Z]{3,4}-\d{3,4})/i);
     if (vtrMatch) {
       const callSign = vtrMatch[1].toUpperCase();
@@ -247,15 +282,37 @@ export function parseAndRegisterE193Roster(
       continue;
     }
 
-    // Identifica Militar/Membro da Guarnição (ex: - 1º SGT 3012948 SILVA - COMANDANTE)
+    // Identifica Militar/Membro da Guarnição (ex: - 1º SGT 3012948 SILVA - COMANDANTE (12H 08:00 ÀS 20:00))
     if (line.startsWith('-') && currentSquad) {
       const memberText = line.replace(/^-+\s*/, '').trim();
       const parts = memberText.split('-').map(p => p.trim());
       const milInfo = parts[0] || '';
-      const roleInfo = parts[1] || 'COMBATENTE';
+      const roleAndShiftInfo = parts[1] || 'COMBATENTE';
+
+      // Extrai informações de horário e carga horária
+      let shiftHours = 24;
+      let shiftStart: string | undefined;
+      let shiftEnd: string | undefined;
+
+      const shiftMatch = roleAndShiftInfo.match(/\((?:(\d{1,2})H)?\s*(?:(\d{2}:\d{2})\s*[ÀA]S\s*(\d{2}:\d{2}))?\)/i);
+      let roleInfo = roleAndShiftInfo;
+
+      if (shiftMatch) {
+        roleInfo = roleAndShiftInfo.replace(shiftMatch[0], '').trim();
+        if (shiftMatch[1]) {
+          const parsedH = parseInt(shiftMatch[1], 10);
+          if ([6, 8, 12, 24].includes(parsedH)) shiftHours = parsedH;
+        }
+        if (shiftMatch[2] && shiftMatch[3]) {
+          const today = new Date().toISOString().slice(0, 10);
+          shiftStart = `${today}T${shiftMatch[2]}:00.000Z`;
+          shiftEnd = `${today}T${shiftMatch[3]}:00.000Z`;
+        }
+      }
 
       const milTokens = milInfo.split(/\s+/);
-      const rank = milTokens[0] || 'SD';
+      const rawRank = milTokens[0] || 'SD';
+      const canonicalRank = normalizarPosto(rawRank);
       let reg = '';
       let warName = '';
 
@@ -267,13 +324,23 @@ export function parseAndRegisterE193Roster(
         reg = `E193-${Math.floor(1000 + Math.random() * 9000)}`;
       }
 
-      const isCommander = roleInfo.toUpperCase().includes('COMANDANTE') || roleInfo.toUpperCase().includes('OFICIAL');
+      const roleUpper = roleInfo.toUpperCase();
+      const isExplicitCg = roleUpper.includes('COMANDANTE DE GUARNI') || 
+                           roleUpper.includes('COMANDANTE') || 
+                           roleUpper.includes('CG') || 
+                           roleUpper.includes('CMT') || 
+                           roleUpper.includes('OFICIAL');
+
       const memberObj: SquadMember = {
         registrationNumber: reg,
-        name: `${rank} ${warName}`,
-        rank,
-        roleInSquad: roleInfo,
-        isCommander,
+        name: `${rawRank} ${warName}`,
+        rank: canonicalRank,
+        roleInSquad: roleInfo || 'COMBATENTE',
+        isCommander: isExplicitCg,
+        isExplicitE193Cg: isExplicitCg,
+        shiftHours,
+        shiftStart,
+        shiftEnd,
       };
 
       currentSquad.members = currentSquad.members || [];
@@ -281,15 +348,15 @@ export function parseAndRegisterE193Roster(
       currentSquad.members.push(memberObj);
       currentSquad.activeMembersCount = currentSquad.members.length;
 
-      if (isCommander) {
-        currentSquad.commanderName = `${rank} ${warName}`;
+      if (isExplicitCg) {
+        currentSquad.commanderName = `${rawRank} ${warName}`;
       }
 
       parsedUsers.push({
         id: `user-${reg}`,
         name: warName,
-        rank,
-        role: roleInfo.toUpperCase().includes('COBOM') ? 'COBOM' : 'GUARNICAO',
+        rank: canonicalRank,
+        role: roleUpper.includes('COBOM') ? 'COBOM' : 'GUARNICAO',
         platoonId: currentSquad.platoonId,
         squadId: currentSquad.id,
         registrationNumber: reg,
