@@ -293,7 +293,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
     setPhotos(photos.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -334,10 +334,10 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
           assignedSquadId,
           initialPhotos: photos,
         };
-        updateOccurrence(updated);
+        await updateOccurrence(updated);
         onSaved(updated);
       } else {
-        const created = createOccurrence({
+        const created = await createOccurrence({
           openedBy: `COBOM - ${currentUser.rank} ${currentUser.name}`,
           solicitorName,
           solicitorPhone,
@@ -360,9 +360,9 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
         });
         onSaved(created);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setErrorMsg('Erro ao registrar ocorrência no sistema.');
+      setErrorMsg(err?.message || 'Erro ao registrar ocorrência no Supabase.');
     } finally {
       setIsSubmitting(false);
     }

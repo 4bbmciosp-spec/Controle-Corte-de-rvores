@@ -58,7 +58,7 @@ export const MilitaryManagementModal: React.FC<MilitaryManagementModalProps> = (
   const [militares, setMilitares] = useState<MilitarUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPerfil, setSelectedPerfil] = useState<'TODOS' | 'COBOM' | 'GUARNICAO'>('TODOS');
+  const [selectedPerfil, setSelectedPerfil] = useState<'TODOS' | 'COBOM' | 'GUARNICAO' | 'PELOTAO'>('TODOS');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Form de Edição / Cadastro
@@ -71,8 +71,9 @@ export const MilitaryManagementModal: React.FC<MilitaryManagementModalProps> = (
     try {
       const list = await getAllMilitares();
       setMilitares(list);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Erro ao carregar militares:', e);
+      setFeedback({ type: 'error', message: e?.message || 'Falha ao carregar militares do Supabase.' });
     } finally {
       setLoading(false);
     }
@@ -89,8 +90,8 @@ export const MilitaryManagementModal: React.FC<MilitaryManagementModalProps> = (
       nome_guerra: '',
       posto_graduacao: 'SD',
       perfil: 'GUARNICAO',
-      pelotao_id: platoons[0]?.id || 'plat-1',
-      guarnicao_id: squads[0]?.id || 'squad-abt-1496',
+      pelotao_id: platoons[0]?.id || undefined,
+      guarnicao_id: squads[0]?.id || undefined,
       funcao_na_guarnicao: 'COMBATENTE',
       is_comandante: false,
       senha_temporaria: true,
@@ -119,42 +120,52 @@ export const MilitaryManagementModal: React.FC<MilitaryManagementModalProps> = (
 
     const cleanMatricula = editMilitar.matricula.replace(/\D/g, '').trim();
 
-    const payload: MilitarUser = {
-      id: editMilitar.id || `mil-${cleanMatricula}`,
-      matricula: cleanMatricula,
-      nome_guerra: editMilitar.nome_guerra.trim().toUpperCase(),
-      posto_graduacao: editMilitar.posto_graduacao || 'SD',
-      perfil: (editMilitar.perfil || 'GUARNICAO') as 'COBOM' | 'GUARNICAO',
-      pelotao_id: editMilitar.pelotao_id,
-      guarnicao_id: editMilitar.guarnicao_id,
-      funcao_na_guarnicao: editMilitar.funcao_na_guarnicao?.trim().toUpperCase() || 'COMBATENTE',
-      is_comandante: Boolean(editMilitar.is_comandante),
-      senha_temporaria: isNew ? true : Boolean(editMilitar.senha_temporaria),
-      email: `${cleanMatricula}@4bbm.cbm`,
-    };
+    try {
+      const payload: MilitarUser = {
+        id: editMilitar.id || crypto.randomUUID(),
+        matricula: cleanMatricula,
+        nome_guerra: editMilitar.nome_guerra.trim().toUpperCase(),
+        posto_graduacao: editMilitar.posto_graduacao || 'SD',
+        perfil: (editMilitar.perfil || 'GUARNICAO') as 'COBOM' | 'GUARNICAO' | 'PELOTAO',
+        squad_atual_id: editMilitar.guarnicao_id || editMilitar.squad_atual_id || null,
+        platoon_atual_id: editMilitar.pelotao_id || editMilitar.platoon_atual_id || null,
+        pelotao_id: editMilitar.pelotao_id,
+        guarnicao_id: editMilitar.guarnicao_id,
+        funcao_na_guarnicao: editMilitar.funcao_na_guarnicao?.trim().toUpperCase() || 'COMBATENTE',
+        is_comandante: Boolean(editMilitar.is_comandante),
+        senha_temporaria: isNew ? true : Boolean(editMilitar.senha_temporaria),
+        email: `${cleanMatricula}@4bbm.cbm`,
+      };
 
-    await saveOrUpdateMilitar(payload);
-    await loadMilitares();
-    if (onMilitaryUpdated) onMilitaryUpdated();
-    setIsEditing(false);
-    setEditMilitar(null);
-    setFeedback({
-      type: 'success',
-      message: `Militar ${payload.posto_graduacao} ${payload.nome_guerra} salvo com sucesso no banco!`
-    });
-    setTimeout(() => setFeedback(null), 4000);
+      await saveOrUpdateMilitar(payload);
+      await loadMilitares();
+      if (onMilitaryUpdated) onMilitaryUpdated();
+      setIsEditing(false);
+      setEditMilitar(null);
+      setFeedback({
+        type: 'success',
+        message: `Militar ${payload.posto_graduacao} ${payload.nome_guerra} salvo com sucesso no banco Supabase!`
+      });
+      setTimeout(() => setFeedback(null), 4000);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || 'Erro ao salvar militar no Supabase.' });
+    }
   };
 
   const handleDeleteMilitar = async (m: MilitarUser) => {
-    if (confirm(`Atenção: Deseja realmente remover o militar ${m.posto_graduacao} ${m.nome_guerra} (Matrícula ${m.matricula}) do sistema e do banco de dados?`)) {
-      await deleteMilitar(m.matricula);
-      await loadMilitares();
-      if (onMilitaryUpdated) onMilitaryUpdated();
-      setFeedback({
-        type: 'success',
-        message: `Militar ${m.posto_graduacao} ${m.nome_guerra} removido do sistema.`
-      });
-      setTimeout(() => setFeedback(null), 4000);
+    if (confirm(`Atenção COBOM: Deseja realmente remover o militar ${m.posto_graduacao} ${m.nome_guerra} (Matrícula ${m.matricula}) do banco de dados?`)) {
+      try {
+        await deleteMilitar(m.matricula);
+        await loadMilitares();
+        if (onMilitaryUpdated) onMilitaryUpdated();
+        setFeedback({
+          type: 'success',
+          message: `Militar ${m.posto_graduacao} ${m.nome_guerra} removido do Supabase com sucesso.`
+        });
+        setTimeout(() => setFeedback(null), 4000);
+      } catch (err: any) {
+        setFeedback({ type: 'error', message: err?.message || 'Erro ao excluir militar no Supabase.' });
+      }
     }
   };
 

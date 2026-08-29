@@ -67,10 +67,14 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   const isAssignedToCurrentSquad = currentUser.squadId === occurrence.assignedSquadId;
   const isPendingOverdue = occurrence.status === 'PENDENTE' && (hoursPending >= 12 || occurrence.isCarriedOver);
 
-  const handleStartAttendance = () => {
+  const handleStartAttendance = async () => {
     if (!currentUser.squadId) return;
-    const updated = setSquadInAttendance(occurrence.id, currentUser.squadId);
-    onUpdateOccurrence(updated);
+    try {
+      const updated = await setSquadInAttendance(occurrence.id, currentUser.squadId);
+      onUpdateOccurrence(updated);
+    } catch (err: any) {
+      alert(`Erro ao iniciar atendimento no Supabase: ${err?.message || err}`);
+    }
   };
 
   const handleDelete = () => {

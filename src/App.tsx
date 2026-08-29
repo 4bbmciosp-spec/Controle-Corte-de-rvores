@@ -24,6 +24,8 @@ import {
   setSquadInAttendance,
   getHoursPending,
   syncOccurrencesFromSupabase,
+  syncSquadsAndPlatoonsFromSupabase,
+  syncNotificationsFromSupabase,
   deleteOccurrence
 } from './services/storageService';
 import { 
@@ -115,7 +117,8 @@ export default function App() {
   }, []);
 
   // Initial Load & Supabase Remote Sync
-  const loadAllData = useCallback(() => {
+  const loadAllData = useCallback(async () => {
+    // 1. Carrega dados do cache local inicialmente para resposta imediata
     const loadedOccs = getStoredOccurrences();
     const loadedPlats = getStoredPlatoons();
     const loadedSquads = getStoredSquads();
@@ -130,12 +133,36 @@ export default function App() {
     setCurrentUser(loadedUser);
     setNotifications(loadedNotifs);
 
-    // Consulta e sincroniza com o banco Supabase em segundo plano
-    syncOccurrencesFromSupabase().then(syncedOccs => {
-      if (syncedOccs && syncedOccs.length > 0) {
-        setOccurrences(syncedOccs);
+    // 2. Consulta e sincroniza estritamente com o banco Supabase em segundo plano
+    try {
+      const [remoteOccs, remoteHierarchy, remoteNotifs] = await Promise.all([
+        syncOccurrencesFromSupabase().catch(err => {
+          console.warn('Aviso ao sincronizar ocorrências:', err);
+          return null;
+        }),
+        syncSquadsAndPlatoonsFromSupabase().catch(err => {
+          console.warn('Aviso ao sincronizar pelotões/guarnições:', err);
+          return null;
+        }),
+        syncNotificationsFromSupabase().catch(err => {
+          console.warn('Aviso ao sincronizar notificações:', err);
+          return null;
+        })
+      ]);
+
+      if (remoteOccs) {
+        setOccurrences(remoteOccs);
       }
-    });
+      if (remoteHierarchy) {
+        if (remoteHierarchy.platoons.length > 0) setPlatoons(remoteHierarchy.platoons);
+        if (remoteHierarchy.squads.length > 0) setSquads(remoteHierarchy.squads);
+      }
+      if (remoteNotifs) {
+        setNotifications(remoteNotifs);
+      }
+    } catch (e) {
+      console.error('Erro durante sincronização com Supabase:', e);
+    }
   }, []);
 
   useEffect(() => {
@@ -144,7 +171,7 @@ export default function App() {
     // Inscrição Realtime no Supabase para sincronização instantânea
     const unsubscribe = subscribeToOccurrencesRealtime(() => {
       syncOccurrencesFromSupabase().then(syncedOccs => {
-        if (syncedOccs && syncedOccs.length > 0) {
+        if (syncedOccs) {
           setOccurrences(syncedOccs);
         }
       });
@@ -207,20 +234,22 @@ export default function App() {
       setRequiresPasswordChange(false);
     }
 
-    // Automatically adapt current user context if matching role
-    if (militar.perfil === 'COBOM') {
-      const cobomUser = users.find(u => u.role === 'COBOM');
-      if (cobomUser) {
-        setCurrentUser(cobomUser);
-        persistCurrentUser(cobomUser);
-      }
-    } else if (militar.perfil === 'GUARNICAO') {
-      const guarnicaoUser = users.find(u => u.role === 'GUARNICAO');
-      if (guarnicaoUser) {
-        setCurrentUser(guarnicaoUser);
-        persistCurrentUser(guarnicaoUser);
-      }
-    }
+    // Configura o usuário atual no perfil oficial do militar
+    const activeSquad = squads.find(s => s.id === militar.squad_atual_id || s.id === militar.guarnicao_id) || squads[0];
+    const activePlatoon = platoons.find(p => p.id === militar.platoon_atual_id || p.id === militar.pelotao_id) || platoons[0];
+
+    const matchedUser: User = {
+      id: `user-${militar.matricula}`,
+      name: militar.nome_guerra,
+      rank: militar.posto_graduacao,
+      role: militar.perfil,
+      platoonId: activePlatoon?.id || 'plat-1',
+      squadId: militar.perfil === 'GUARNICAO' ? (activeSquad?.id || squads[0]?.id) : undefined,
+      registrationNumber: militar.matricula,
+    };
+
+    setCurrentUser(matchedUser);
+    persistCurrentUser(matchedUser);
   };
 
   // Handle Password Changed successfully
@@ -258,27 +287,35 @@ export default function App() {
   };
 
   // Delete Occurrence (Exclusive for COBOM)
-  const handleDeleteOccurrence = (occId: string) => {
-    deleteOccurrence(occId);
-    loadAllData();
-    if (detailOccurrence?.id === occId) {
-      setDetailOccurrence(null);
-    }
-    if (editOccurrence?.id === occId) {
-      setEditOccurrence(null);
+  const handleDeleteOccurrence = async (occId: string) => {
+    try {
+      await deleteOccurrence(occId);
+      await loadAllData();
+      if (detailOccurrence?.id === occId) {
+        setDetailOccurrence(null);
+      }
+      if (editOccurrence?.id === occId) {
+        setEditOccurrence(null);
+      }
+    } catch (err: any) {
+      alert(`Erro ao excluir ocorrência no Supabase: ${err?.message || err}`);
     }
   };
 
   // Start Attendance in Field
-  const handleStartAttendance = (occ: Occurrence) => {
+  const handleStartAttendance = async (occ: Occurrence) => {
     if (!currentUser?.squadId) {
       alert('Selecione um perfil de Guarnição para iniciar o atendimento.');
       return;
     }
-    const updated = setSquadInAttendance(occ.id, currentUser.squadId);
-    loadAllData();
-    if (detailOccurrence?.id === occ.id) {
-      setDetailOccurrence(updated);
+    try {
+      const updated = await setSquadInAttendance(occ.id, currentUser.squadId);
+      await loadAllData();
+      if (detailOccurrence?.id === occ.id) {
+        setDetailOccurrence(updated);
+      }
+    } catch (err: any) {
+      alert(`Erro ao iniciar atendimento no Supabase: ${err?.message || err}`);
     }
   };
 

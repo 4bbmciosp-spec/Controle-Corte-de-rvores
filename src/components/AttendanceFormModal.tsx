@@ -158,7 +158,7 @@ export const AttendanceFormModal: React.FC<AttendanceFormModalProps> = ({
     setPhotos(updated);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -191,7 +191,7 @@ export const AttendanceFormModal: React.FC<AttendanceFormModalProps> = ({
         stage: statusResult === 'CONCLUIDA' ? 'FINALIZACAO' : 'DURANTE_ATENDIMENTO'
       }));
 
-      const updated = recordAttendance(
+      const updated = await recordAttendance(
         occurrence.id,
         {
           squadId: currentSquad.id,
@@ -212,9 +212,9 @@ export const AttendanceFormModal: React.FC<AttendanceFormModalProps> = ({
       );
 
       onSuccess(updated);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setErrorMsg('Erro ao salvar registro de atendimento.');
+      setErrorMsg(err?.message || 'Erro ao salvar registro de atendimento no Supabase.');
     } finally {
       setIsSubmitting(false);
     }

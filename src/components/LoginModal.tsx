@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { loginWithMatricula, MilitarUser } from '../services/authService';
-import { testSupabaseConnection, isSupabaseConfigured } from '../services/supabaseClient';
+import { testSupabaseConnection } from '../services/supabaseClient';
 import { 
   ShieldCheck, 
   Lock, 
@@ -26,7 +26,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Connection testing state (Etapa 2 validation)
   const [connectionStatus, setConnectionStatus] = useState<{
     checking: boolean;
     connected: boolean;
@@ -75,7 +74,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
     if (res.success && res.militar) {
       onLoginSuccess(res.militar, Boolean(res.requiresPasswordChange));
     } else {
-      setErrorMsg(res.error || 'Erro ao realizar login. Verifique seus dados.');
+      setErrorMsg(res.error || 'Credenciais inválidas ou militar não encontrado.');
     }
   };
 
@@ -97,18 +96,18 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
 
           <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 bg-black/30 border border-white/15 rounded-full text-[11px] font-mono text-amber-300">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Autenticação Oficial de Militares (e-193)</span>
+            <span>Autenticação Oficial de Militares</span>
           </div>
         </div>
 
-        {/* Supabase Connection Status Badge (ETAPA 2) */}
+        {/* Supabase Connection Status Badge */}
         <div className="bg-slate-50 border-b border-slate-200 px-4 py-2 flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
             <Database className="w-3.5 h-3.5 text-slate-500" />
             <span className="font-semibold text-slate-600">Supabase:</span>
             {connectionStatus.checking ? (
               <span className="text-slate-500 flex items-center gap-1">
-                <RefreshCw className="w-3 h-3 animate-spin text-blue-600" /> Testando...
+                <RefreshCw className="w-3 h-3 animate-spin text-blue-600" /> Verificando...
               </span>
             ) : connectionStatus.connected ? (
               <span className="text-emerald-700 font-bold flex items-center gap-1">
@@ -116,7 +115,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
               </span>
             ) : (
               <span className="text-amber-700 font-bold flex items-center gap-1" title={connectionStatus.message}>
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Falha
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Desconectado
               </span>
             )}
           </div>
@@ -135,10 +134,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {errorMsg && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-start gap-2 animate-shake">
+            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
               <div>
-                <strong className="font-bold">Atenção no Login:</strong>
+                <strong className="font-bold">Atenção no Acesso:</strong>
                 <p className="mt-0.5">{errorMsg}</p>
               </div>
             </div>
@@ -146,7 +145,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
-              Matrícula do Militar (ID Funcional)
+              Matrícula do Militar (Somente Números)
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -163,7 +162,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
               />
             </div>
             <span className="text-[10px] text-slate-500 mt-1 block">
-              Formato de login interno: <code className="font-mono text-slate-700">{matricula ? `${matricula.replace(/\D/g, '')}@4bbm.cbm` : '{matricula}@4bbm.cbm'}</code>
+              Email interno associado: <code className="font-mono text-slate-700">{matricula ? `${matricula.replace(/\D/g, '')}@4bbm.cbm` : '{matricula}@4bbm.cbm'}</code>
             </span>
           </div>
 
@@ -179,7 +178,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
                 type={showPassword ? 'text' : 'password'}
                 value={senha}
                 onChange={(e) => setSenha(e.target.value)}
-                placeholder="Sua senha de acesso"
+                placeholder="Sua senha cadastrada no Supabase"
                 className="w-full pl-9 pr-10 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-sm focus:bg-white focus:border-red-600 focus:ring-2 focus:ring-red-100 transition-all"
                 required
               />
@@ -197,56 +196,22 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
           <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 flex items-start gap-2">
             <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
             <div>
-              <strong className="font-bold">Primeiro Acesso ao Sistema?</strong>
+              <strong className="font-bold">Instrução de Primeiro Acesso:</strong>
               <p className="mt-0.5 text-amber-800">
                 A senha padrão inicial consiste nos <strong>4 últimos dígitos da sua matrícula</strong> acrescidos de <code>cbm</code> (exemplo: para matrícula <code>3177360</code>, utilize <code>7360cbm</code>). A troca é obrigatória no primeiro login.
               </p>
             </div>
           </div>
 
-          {/* Atalhos Rápidos para Teste Operacional */}
-          <div className="pt-2 border-t border-slate-200">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
-              Atalhos de Acesso Rápido para Teste:
-            </span>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  setMatricula('3177360');
-                  setSenha('7360cbm');
-                  setErrorMsg(null);
-                }}
-                className="p-2 text-left bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 text-slate-800 transition-all cursor-pointer"
-              >
-                <div className="font-bold text-[11px] text-red-900">SD LUTIERO (COBOM)</div>
-                <div className="text-[10px] text-slate-500 font-mono">Mat: 3177360 • 7360cbm</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setMatricula('2693038');
-                  setSenha('3038cbm');
-                  setErrorMsg(null);
-                }}
-                className="p-2 text-left bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 text-slate-800 transition-all cursor-pointer"
-              >
-                <div className="font-bold text-[11px] text-red-900">1º SGT GONÇALVES (VTR)</div>
-                <div className="text-[10px] text-slate-500 font-mono">Mat: 2693038 • 3038cbm</div>
-              </button>
-            </div>
-          </div>
-
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 bg-red-800 hover:bg-red-700 active:bg-red-900 text-white font-extrabold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            className="w-full py-3 bg-red-800 hover:bg-red-700 active:bg-red-900 text-white font-extrabold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-2"
           >
             {loading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Autenticando Militar...</span>
+                <span>Autenticando Militar no Supabase...</span>
               </>
             ) : (
               <>

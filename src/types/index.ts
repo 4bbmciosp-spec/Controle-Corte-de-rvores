@@ -70,12 +70,15 @@ export interface Platoon {
 }
 
 export interface SquadMember {
+  id?: string;
   registrationNumber: string; // Matrícula
   name: string; // Posto/Graduação e Nome (ex: "1º SGT BRUM")
+  rank?: string;
   roleInSquad: string; // ex: "COMANDANTE DE GUARNIÇÃO", "COV / OPERADOR / CONDUTOR"
-  shiftHours: number; // 12 ou 24
-  shiftStart: string;
-  shiftEnd: string;
+  isCommander?: boolean;
+  shiftHours?: number; // 12 ou 24
+  shiftStart?: string;
+  shiftEnd?: string;
 }
 
 export interface Squad {
