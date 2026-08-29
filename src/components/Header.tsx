@@ -192,16 +192,18 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="lg:hidden">Relatório</span>
           </button>
 
-          {/* Cadastro e Escala de Guarnições e-193 */}
-          <button
-            onClick={onOpenSquadImport}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-900/90 hover:bg-red-950 text-red-100 text-xs font-semibold rounded-lg border border-red-700/70 transition-colors cursor-pointer"
-            title="Cadastro de Guarnições e Escala de Viaturas e-193"
-          >
-            <Truck className="w-3.5 h-3.5 text-amber-300" />
-            <span className="hidden lg:inline">Guarnições e-193</span>
-            <span className="lg:hidden">Guarnições</span>
-          </button>
+          {/* Cadastro e Escala de Guarnições e-193 (Exclusivo COBOM) */}
+          {currentUser.role === 'COBOM' && onOpenSquadImport && (
+            <button
+              onClick={onOpenSquadImport}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-900/90 hover:bg-red-950 text-red-100 text-xs font-semibold rounded-lg border border-red-700/70 transition-colors cursor-pointer"
+              title="Cadastro de Guarnições e Escala de Viaturas e-193 (Exclusivo COBOM)"
+            >
+              <Truck className="w-3.5 h-3.5 text-amber-300" />
+              <span className="hidden lg:inline">Guarnições e-193</span>
+              <span className="lg:hidden">Guarnições</span>
+            </button>
+          )}
 
           {/* Turno 24h & Passagem de Serviço */}
           <button
@@ -325,16 +327,18 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    <button
-                      onClick={() => {
-                        onOpenSquadImport();
-                        setShowProfileMenu(false);
-                      }}
-                      className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 rounded flex items-center gap-1.5 cursor-pointer font-medium"
-                    >
-                      <Truck className="w-3.5 h-3.5 text-red-700" />
-                      <span>Cadastro de Guarnições e Escala e-193</span>
-                    </button>
+                    {currentUser.role === 'COBOM' && onOpenSquadImport && (
+                      <button
+                        onClick={() => {
+                          onOpenSquadImport();
+                          setShowProfileMenu(false);
+                        }}
+                        className="w-full text-left px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 rounded flex items-center gap-1.5 cursor-pointer font-medium"
+                      >
+                        <Truck className="w-3.5 h-3.5 text-red-700" />
+                        <span>Cadastro de Guarnições e Escala e-193</span>
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {

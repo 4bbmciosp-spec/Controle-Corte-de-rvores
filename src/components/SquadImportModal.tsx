@@ -7,7 +7,11 @@ import {
   removeSquadMember,
   addNewSquad,
   removeSquad,
-  setSquadCommander
+  setSquadCommander,
+  upsertSquadToSupabase,
+  deleteSquadFromSupabase,
+  assignMilitarToSquad,
+  registerEscalaServico
 } from '../services/storageService';
 import { 
   X, 
@@ -72,6 +76,7 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
   const [activeTab, setActiveTab] = useState<'VIEW_ROSTER' | 'PASTE'>('VIEW_ROSTER');
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Sub-modals for manual management
   const [editingMember, setEditingMember] = useState<{
@@ -103,7 +108,7 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
     }
   };
 
-  const handleProcessImport = () => {
+  const handleProcessImport = async () => {
     setErrorMsg('');
     setSuccessMsg('');
     if (!rawText.trim()) {
@@ -111,17 +116,29 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
       return;
     }
 
+    setIsProcessing(true);
     try {
+      // 1. Faz parsing do texto do e-193
       const result = parseAndRegisterE193Roster(rawText, activeSquadsList, platoons);
+      if (!result.squads || result.squads.length === 0) {
+        throw new Error('Nenhuma viatura válida foi identificada no texto colado. Verifique se o formato do e-193 inclui prefixos como ABT-1496, ABTR, ABS etc.');
+      }
+
+      // 2. Grava todas as guarnições e militares no Supabase
+      await registerEscalaServico(result.squads, platoons);
+
+      // 3. Notifica atualização e exibe sucesso
       notifyUpdated(result.squads, result.users);
       if (onImportSuccess) {
         onImportSuccess();
       }
-      setSuccessMsg(`Sucesso! ${result.squads.length} guarnições e ${result.users.length} militares processados do e-193.`);
+      setSuccessMsg(`Sucesso! ${result.squads.length} guarnições e ${result.users.length} militares gravados com sucesso no Supabase.`);
       setActiveTab('VIEW_ROSTER');
-    } catch (err) {
-      console.error(err);
-      setErrorMsg('Erro ao processar dados do e-193. Verifique a formatação.');
+    } catch (err: any) {
+      console.error('Erro ao processar e salvar escala do e-193:', err);
+      setErrorMsg(err?.message || 'Erro ao processar ou gravar dados do e-193 no Supabase. Verifique se seu usuário tem perfil COBOM para escrita.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -160,9 +177,11 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
     });
   };
 
-  const handleSaveMember = (e: React.FormEvent) => {
+  const handleSaveMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingMember) return;
+    setErrorMsg('');
+    setSuccessMsg('');
 
     const roleTitle = editingMember.roleInSquad.trim();
     const newMemberObj: SquadMember = {
@@ -192,65 +211,122 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
         );
       }
 
+      // Persiste no Supabase
+      const targetSquad = updatedSquads.find(s => s.id === editingMember.squadId);
+      if (targetSquad) {
+        await upsertSquadToSupabase(targetSquad);
+        if (newMemberObj.registrationNumber && /^\d+$/.test(newMemberObj.registrationNumber)) {
+          await assignMilitarToSquad(
+            newMemberObj.registrationNumber,
+            targetSquad.id,
+            targetSquad.platoonId,
+            newMemberObj.roleInSquad,
+            editingMember.isCommander
+          );
+        }
+      }
+
       notifyUpdated(updatedSquads, activeUsersList);
       setEditingMember(null);
       setSuccessMsg(`Posto operacional ${roleTitle} atualizado na viatura com sucesso.`);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Erro ao salvar dados do posto.');
+      setErrorMsg(err?.message || 'Falha ao salvar dados do posto no Supabase.');
     }
   };
 
-  const handleDeleteMember = (squadId: string, reg: string, name: string) => {
+  const handleDeleteMember = async (squadId: string, reg: string, name: string) => {
+    setErrorMsg('');
+    setSuccessMsg('');
     if (confirm(`Deseja remover o posto ${name} (${reg}) da viatura?`)) {
-      const updatedSquads = removeSquadMember(activeSquadsList, squadId, reg);
-      notifyUpdated(updatedSquads, activeUsersList);
-      setSuccessMsg(`Posto operacional removido da escala.`);
+      try {
+        const updatedSquads = removeSquadMember(activeSquadsList, squadId, reg);
+        const targetSquad = updatedSquads.find(s => s.id === squadId);
+        if (targetSquad) {
+          await upsertSquadToSupabase(targetSquad);
+        }
+        if (reg && /^\d+$/.test(reg)) {
+          await assignMilitarToSquad(reg, null, null, undefined, false);
+        }
+        notifyUpdated(updatedSquads, activeUsersList);
+        setSuccessMsg(`Posto operacional removido da escala.`);
+      } catch (err: any) {
+        console.error(err);
+        setErrorMsg(err?.message || 'Falha ao remover posto da viatura no Supabase.');
+      }
     }
   };
 
-  const handleSetCommander = (squadId: string, commanderName: string) => {
-    const updatedSquads = setSquadCommander(activeSquadsList, squadId, commanderName);
-    notifyUpdated(updatedSquads, activeUsersList);
-    setSuccessMsg(`Comando da guarnição atualizado.`);
+  const handleSetCommander = async (squadId: string, commanderName: string) => {
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const updatedSquads = setSquadCommander(activeSquadsList, squadId, commanderName);
+      const targetSquad = updatedSquads.find(s => s.id === squadId);
+      if (targetSquad) {
+        await upsertSquadToSupabase(targetSquad);
+      }
+      notifyUpdated(updatedSquads, activeUsersList);
+      setSuccessMsg(`Comando da guarnição atualizado.`);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err?.message || 'Falha ao atualizar comandante no Supabase.');
+    }
   };
 
-  const handleSaveNewSquad = (e: React.FormEvent) => {
+  const handleSaveNewSquad = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
     if (!newSquadCallSign.trim()) {
-      alert('Informe o prefixo da viatura (ex: ABT-1999).');
+      setErrorMsg('Informe o prefixo da viatura (ex: ABT-1999).');
       return;
     }
 
-    const plat = platoons.find(p => p.id === newSquadPlatoonId);
-    const unitText = plat ? `4º BBM / 1ª CIA / ${plat.name.split('-')[0].trim()}` : '4º BBM - Santa Maria';
-    const squadId = `squad-${newSquadCallSign.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+    try {
+      const plat = platoons.find(p => p.id === newSquadPlatoonId);
+      const unitText = plat ? `4º BBM / 1ª CIA / ${plat.name.split('-')[0].trim()}` : '4º BBM - Santa Maria';
+      const squadId = `squad-${newSquadCallSign.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 
-    const newSquadObj: Squad = {
-      id: squadId,
-      name: `${newSquadCallSign.trim().toUpperCase()} (${plat?.name?.split('-')[0]?.trim() || 'Guarnição'})`,
-      callSign: newSquadCallSign.trim().toUpperCase(),
-      unitText,
-      platoonId: newSquadPlatoonId,
-      commanderName: newSquadCommander || 'A Definir',
-      currentShift: newSquadShift,
-      status: 'DISPONIVEL',
-      activeMembersCount: 0,
-      members: []
-    };
+      const newSquadObj: Squad = {
+        id: squadId,
+        name: `${newSquadCallSign.trim().toUpperCase()} (${plat?.name?.split('-')[0]?.trim() || 'Guarnição'})`,
+        callSign: newSquadCallSign.trim().toUpperCase(),
+        unitText,
+        platoonId: newSquadPlatoonId,
+        commanderName: newSquadCommander || 'A Definir',
+        currentShift: newSquadShift,
+        status: 'DISPONIVEL',
+        activeMembersCount: 0,
+        members: []
+      };
 
-    const updatedSquads = addNewSquad(activeSquadsList, newSquadObj);
-    notifyUpdated(updatedSquads, activeUsersList);
-    setIsAddingSquad(false);
-    setNewSquadCallSign('');
-    setSuccessMsg(`Viatura ${newSquadObj.callSign} cadastrada no ${plat?.name}.`);
+      await upsertSquadToSupabase(newSquadObj);
+
+      const updatedSquads = addNewSquad(activeSquadsList, newSquadObj);
+      notifyUpdated(updatedSquads, activeUsersList);
+      setIsAddingSquad(false);
+      setNewSquadCallSign('');
+      setSuccessMsg(`Viatura ${newSquadObj.callSign} cadastrada com sucesso no Supabase.`);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err?.message || 'Falha ao cadastrar viatura no Supabase.');
+    }
   };
 
-  const handleDeleteSquad = (squadId: string, callSign: string) => {
+  const handleDeleteSquad = async (squadId: string, callSign: string) => {
+    setErrorMsg('');
+    setSuccessMsg('');
     if (confirm(`Deseja remover a viatura ${callSign} da escala do dia?`)) {
-      const updatedSquads = removeSquad(activeSquadsList, squadId);
-      notifyUpdated(updatedSquads, activeUsersList);
-      setSuccessMsg(`Viatura ${callSign} removida.`);
+      try {
+        await deleteSquadFromSupabase(squadId);
+        const updatedSquads = removeSquad(activeSquadsList, squadId);
+        notifyUpdated(updatedSquads, activeUsersList);
+        setSuccessMsg(`Viatura ${callSign} removida com sucesso do Supabase.`);
+      } catch (err: any) {
+        console.error(err);
+        setErrorMsg(err?.message || 'Falha ao remover viatura no Supabase.');
+      }
     }
   };
 
@@ -329,18 +405,30 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
 
         {/* Feedback Messages */}
         {successMsg && (
-          <div className="mx-5 mt-3 p-3 bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs rounded-lg flex items-center justify-between">
+          <div className="mx-5 mt-3 p-3 bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs rounded-lg flex items-center justify-between shadow-sm">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span className="font-semibold">{successMsg}</span>
             </div>
-            <button onClick={() => setSuccessMsg('')} className="text-emerald-700 hover:text-emerald-900 text-xs font-bold cursor-pointer">OK</button>
+            <button onClick={() => setSuccessMsg('')} className="text-emerald-700 hover:text-emerald-900 text-xs font-bold cursor-pointer">✕</button>
           </div>
         )}
         {errorMsg && (
-          <div className="mx-5 mt-3 p-3 bg-red-50 border border-red-300 text-red-900 text-xs rounded-lg flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-            <span className="font-semibold">{errorMsg}</span>
+          <div className="mx-5 mt-3 p-3.5 bg-red-50 border-2 border-red-400 text-red-900 text-xs rounded-lg flex items-start justify-between gap-3 shadow-sm">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-bold text-red-950">Falha ao processar operação:</div>
+                <div className="font-medium text-red-900 mt-0.5">{errorMsg}</div>
+              </div>
+            </div>
+            <button 
+              onClick={() => setErrorMsg('')} 
+              className="text-red-700 hover:text-red-900 text-sm font-black p-1 hover:bg-red-100 rounded transition-colors cursor-pointer shrink-0"
+              title="Fechar aviso de erro"
+            >
+              ✕
+            </button>
           </div>
         )}
 
@@ -382,11 +470,23 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
                 </button>
                 <button
                   type="button"
+                  disabled={isProcessing}
                   onClick={handleProcessImport}
-                  className="px-5 py-2.5 bg-red-800 hover:bg-red-700 rounded-lg text-xs font-extrabold text-white flex items-center gap-2 shadow-sm transition-all cursor-pointer"
+                  className={`px-5 py-2.5 rounded-lg text-xs font-extrabold text-white flex items-center gap-2 shadow-sm transition-all cursor-pointer ${
+                    isProcessing ? 'bg-red-950/70 cursor-not-allowed opacity-80' : 'bg-red-800 hover:bg-red-700'
+                  }`}
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Processar Escala e-193</span>
+                  {isProcessing ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Gravando no Supabase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Processar Escala e-193</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

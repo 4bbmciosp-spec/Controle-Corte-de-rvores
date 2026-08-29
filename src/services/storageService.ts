@@ -14,8 +14,19 @@ import {
   recordAttendanceInSupabase,
   insertNotificationToSupabase,
   fetchOccurrencesFromSupabase,
+  upsertSquadToSupabase,
+  deleteSquadFromSupabase,
+  assignMilitarToSquad,
+  registerEscalaServico,
   ensureUUID,
 } from './supabaseDataService';
+
+export {
+  upsertSquadToSupabase,
+  deleteSquadFromSupabase,
+  assignMilitarToSquad,
+  registerEscalaServico,
+};
 
 /**
  * ============================================================================

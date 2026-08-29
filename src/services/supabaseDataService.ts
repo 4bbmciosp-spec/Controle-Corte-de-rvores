@@ -80,6 +80,131 @@ export async function fetchSquadsFromSupabase(): Promise<Squad[]> {
 }
 
 /**
+ * Salva ou atualiza uma Guarnição/Viatura (squad) no Supabase (Exclusivo COBOM)
+ */
+export async function upsertSquadToSupabase(squad: Squad | Partial<Squad>): Promise<Squad> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
+  if (!squad.id || !squad.callSign) {
+    throw new Error('Dados da viatura incompletos: ID e Prefixo são obrigatórios.');
+  }
+
+  const payload: any = {
+    id: squad.id,
+    name: squad.name || `${squad.callSign} (e-193)`,
+    call_sign: squad.callSign,
+    unit_text: squad.unitText || '4º BBM - Santa Maria',
+    platoon_id: squad.platoonId || null,
+    commander_name: squad.commanderName || 'A Definir',
+    current_shift: squad.currentShift || 'Turno 24h',
+    status: squad.status || 'DISPONIVEL',
+    active_members_count: squad.members?.length || squad.activeMembersCount || 0,
+  };
+
+  const { data, error } = await supabase
+    .from('squads')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Falha ao salvar viatura/guarnição '${squad.callSign}' no Supabase: ${error.message}`);
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    callSign: data.call_sign,
+    unitText: data.unit_text || '',
+    platoonId: data.platoon_id || '',
+    commanderName: data.commander_name || 'Comandante da VTR',
+    currentShift: data.current_shift || 'Turno 24h',
+    status: (data.status || 'DISPONIVEL') as 'DISPONIVEL' | 'EM_OCORRENCIA' | 'MANUTENCAO',
+    activeMembersCount: data.active_members_count || 0,
+    members: squad.members || [],
+  };
+}
+
+/**
+ * Remove uma Guarnição/Viatura (squad) no Supabase (Exclusivo COBOM)
+ */
+export async function deleteSquadFromSupabase(squadId: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
+  if (!squadId) throw new Error('ID da viatura inválido.');
+
+  const { error } = await supabase
+    .from('squads')
+    .delete()
+    .eq('id', squadId);
+
+  if (error) {
+    throw new Error(`Falha ao excluir viatura no Supabase: ${error.message}`);
+  }
+
+  return true;
+}
+
+/**
+ * Vincula um militar à sua guarnição e pelotão atual no Supabase
+ */
+export async function assignMilitarToSquad(
+  matricula: string,
+  squadId: string | null,
+  platoonId?: string | null,
+  funcao?: string,
+  isComandante?: boolean
+): Promise<boolean> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
+  const cleanMatricula = matricula.replace(/\D/g, '').trim();
+  if (!cleanMatricula) return false;
+
+  const updatePayload: any = {
+    squad_atual_id: squadId || null,
+  };
+  if (platoonId) updatePayload.platoon_atual_id = platoonId;
+  if (funcao) updatePayload.funcao_na_guarnicao = funcao;
+  if (typeof isComandante === 'boolean') updatePayload.is_comandante = isComandante;
+
+  const { error } = await supabase
+    .from('militares')
+    .update(updatePayload)
+    .eq('matricula', cleanMatricula);
+
+  if (error) {
+    console.warn(`Aviso ao atualizar lotação do militar ${cleanMatricula}:`, error.message);
+  }
+
+  return true;
+}
+
+/**
+ * Registra a escala de serviço completa no Supabase
+ */
+export async function registerEscalaServico(
+  squads: Squad[],
+  platoons?: Platoon[]
+): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
+
+  for (const squad of squads) {
+    await upsertSquadToSupabase(squad);
+
+    if (squad.members && squad.members.length > 0) {
+      for (const member of squad.members) {
+        if (member.registrationNumber && /^\d+$/.test(member.registrationNumber.trim())) {
+          await assignMilitarToSquad(
+            member.registrationNumber,
+            squad.id,
+            squad.platoonId,
+            member.roleInSquad,
+            member.roleInSquad?.toUpperCase().includes('COMANDANTE') || squad.commanderName === member.name
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
  * Busca quem está de serviço no momento a partir da view 'v_guarnicao_em_servico'
  */
 export async function fetchGuarnicaoEmServicoFromView(): Promise<any[]> {
