@@ -261,6 +261,33 @@ export const AttendanceFormModal: React.FC<AttendanceFormModalProps> = ({
             <div className="text-slate-600 line-clamp-2">{occurrence.description}</div>
           </div>
 
+          {/* DADOS DE RESPONSABILIDADE OPERACIONAL (CG vs PREENCHIDO POR) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-100/90 rounded-xl border border-slate-200 text-xs">
+            <div className="flex flex-col gap-1 p-2 bg-white rounded-lg border border-slate-200 shadow-sm">
+              <span className="font-bold text-amber-900 flex items-center gap-1">
+                ⭐ Comandante da Guarnição (CG)
+              </span>
+              <span className="font-extrabold text-slate-800">
+                {occurrence.cgGuarnicaoDespachoName || currentSquad.commanderName || 'Comandante da VTR'}
+              </span>
+              <span className="text-[10px] text-slate-700">
+                Snapshot capturado no despacho da viatura {currentSquad.callSign}
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-1 p-2 bg-white rounded-lg border border-slate-200 shadow-sm">
+              <span className="font-bold text-blue-900 flex items-center gap-1">
+                ✍️ Preenchido por (Militar Autenticado)
+              </span>
+              <span className="font-extrabold text-slate-800">
+                {currentUser.rank} {currentUser.name}
+              </span>
+              <span className="text-[10px] text-slate-700 font-mono">
+                Matrícula: {currentUser.registrationNumber || 'N/D'} (Não editável)
+              </span>
+            </div>
+          </div>
+
           {/* DESFECHO DO ATENDIMENTO (BIG BUTTONS) */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">

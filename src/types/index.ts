@@ -202,3 +202,64 @@ export interface OccurrenceFilters {
   onlyPendingAlert: boolean;
   dateRange: 'TODOS' | 'HOJE' | 'ULTIMAS_24H' | 'ULTIMOS_7D';
 }
+
+export interface E193ImportEntry {
+  platoon_name: string;
+  platoon_bbm: string;
+  platoon_headquarters: string;
+  call_sign: string;
+  matricula: string;
+  posto_graduacao: string;
+  nome_guerra: string;
+  funcao_na_guarnicao: string;
+  carga_horaria_horas: number;
+  inicio_turno: string; // ISO string com -03:00
+  fim_turno: string;    // ISO string com -03:00
+}
+
+export interface E193ImportResult {
+  platoons_upserted?: number;
+  squads_upserted?: number;
+  militares_upserted?: number;
+  escalas_inserted?: number;
+  escalas_updated?: number;
+  erros?: string[];
+  total_processado?: number;
+  success?: boolean;
+}
+
+export interface GuarnicaoEmServicoRow {
+  escala_id: string;
+  squad_id: string;
+  squad_name?: string;
+  call_sign: string;
+  platoon_id: string;
+  platoon_name?: string;
+  platoon_headquarters?: string;
+  platoon_bbm?: string;
+  militar_id: string;
+  matricula: string;
+  posto_graduacao: string;
+  nome_guerra: string;
+  funcao_na_guarnicao: string;
+  inicio_turno: string;
+  fim_turno: string;
+  carga_horaria_horas?: number;
+  is_cg: boolean;
+  cg_tipo_definicao?: 'EXPLICITO_E193' | 'AUTOMATICO_HIERARQUIA' | 'MANUAL_COBOM';
+  cg_manual_definido_por?: string;
+  cg_manual_definido_em?: string;
+  origem_escala?: string;
+}
+
+export interface EscalaAuditoriaEntry {
+  id: string;
+  escala_id: string;
+  campo: string;
+  valor_anterior: string | null;
+  valor_novo: string | null;
+  origem: string;
+  alterado_por?: string | null;
+  alterado_por_nome?: string | null;
+  alterado_em: string;
+}

@@ -12,7 +12,11 @@ import {
   OccurrenceType,
   TreeRiskType,
   UnresolvedReason,
-  TimelineEvent
+  TimelineEvent,
+  GuarnicaoEmServicoRow,
+  E193ImportEntry,
+  E193ImportResult,
+  EscalaAuditoriaEntry
 } from '../types';
 import {
   determinarCgPorIntervalo,
@@ -1205,3 +1209,146 @@ export function subscribeToOccurrencesRealtime(onUpdate: () => void) {
     return () => {};
   }
 }
+
+/**
+ * Consulta a View 'v_guarnicao_em_servico' (Fonte de verdade da escala ativa)
+ */
+export async function fetchGuarnicoesEmServico(): Promise<GuarnicaoEmServicoRow[]> {
+  if (!isSupabaseConfigured()) return [];
+
+  const { data, error } = await supabase
+    .from('v_guarnicao_em_servico')
+    .select('*')
+    .order('call_sign', { ascending: true });
+
+  if (error) {
+    console.warn('Aviso ao consultar v_guarnicao_em_servico no Supabase:', error.message);
+    return [];
+  }
+
+  return (data || []).map((r: any) => ({
+    escala_id: r.escala_id,
+    squad_id: r.squad_id,
+    squad_name: r.squad_name || r.call_sign,
+    call_sign: r.call_sign,
+    platoon_id: r.platoon_id,
+    platoon_name: r.platoon_name,
+    platoon_headquarters: r.platoon_headquarters,
+    platoon_bbm: r.platoon_bbm,
+    militar_id: r.militar_id,
+    matricula: r.matricula,
+    posto_graduacao: r.posto_graduacao,
+    nome_guerra: r.nome_guerra,
+    funcao_na_guarnicao: r.funcao_na_guarnicao,
+    inicio_turno: r.inicio_turno,
+    fim_turno: r.fim_turno,
+    carga_horaria_horas: r.carga_horaria_horas,
+    is_cg: Boolean(r.is_cg),
+    cg_tipo_definicao: r.cg_tipo_definicao || (r.is_cg ? 'EXPLICITO_E193' : undefined),
+    cg_manual_definido_por: r.cg_manual_definido_por,
+    cg_manual_definido_em: r.cg_manual_definido_em,
+    origem_escala: r.origem_escala,
+  }));
+}
+
+/**
+ * Chama a RPC 'fn_import_escala_e193' no Postgres (Exclusivo COBOM)
+ */
+export async function importEscalaE193Rpc(entries: E193ImportEntry[]): Promise<E193ImportResult> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
+  if (!entries || entries.length === 0) {
+    throw new Error('Nenhum registro para importar.');
+  }
+
+  // Prepara payload estritamente compatível com jsonb p_entries
+  const payloadEntries = entries.map(e => ({
+    platoon_name: e.platoon_name,
+    platoon_bbm: e.platoon_bbm,
+    platoon_headquarters: e.platoon_headquarters,
+    call_sign: e.call_sign,
+    matricula: e.matricula,
+    posto_graduacao: e.posto_graduacao,
+    nome_guerra: e.nome_guerra,
+    funcao_na_guarnicao: e.funcao_na_guarnicao,
+    carga_horaria_horas: e.carga_horaria_horas,
+    inicio_turno: e.inicio_turno,
+    fim_turno: e.fim_turno,
+  }));
+
+  const { data, error } = await supabase.rpc('fn_import_escala_e193', {
+    p_entries: payloadEntries,
+  });
+
+  if (error) {
+    const msg = error.message || '';
+    if (msg.includes('COBOM') || msg.includes('perfil') || msg.includes('permission') || msg.includes('denied')) {
+      throw new Error('Apenas operadores com perfil COBOM possuem autorização para importar a escala de serviço.');
+    }
+    throw new Error(`Falha ao importar escala e-193: ${msg}`);
+  }
+
+  return (data || { success: true }) as E193ImportResult;
+}
+
+/**
+ * Chama a RPC 'fn_editar_cg_manual' no Postgres (Exclusivo COBOM)
+ */
+export async function editarCgManualRpc(escalaId: string, novoMilitarCgId: string): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
+  if (!escalaId || !novoMilitarCgId) {
+    throw new Error('Identificadores de escala e do novo CG são obrigatórios.');
+  }
+
+  const { error } = await supabase.rpc('fn_editar_cg_manual', {
+    p_escala_id: escalaId,
+    p_novo_militar_cg_id: novoMilitarCgId,
+  });
+
+  if (error) {
+    const msg = error.message || '';
+    if (msg.includes('COBOM') || msg.includes('perfil') || msg.includes('permission') || msg.includes('denied')) {
+      throw new Error('Apenas operadores com perfil COBOM possuem autorização para alterar o Comandante de Guarnição.');
+    }
+    throw new Error(`Falha ao alterar Comandante de Guarnição manualmente: ${msg}`);
+  }
+}
+
+/**
+ * Busca histórico da tabela 'escalas_servico_auditoria'
+ */
+export async function fetchEscalasAuditoria(escalaId?: string): Promise<EscalaAuditoriaEntry[]> {
+  if (!isSupabaseConfigured()) return [];
+
+  try {
+    let query = supabase
+      .from('escalas_servico_auditoria')
+      .select('id, escala_id, campo, valor_anterior, valor_novo, origem, alterado_por, alterado_em')
+      .order('alterado_em', { ascending: false })
+      .limit(50);
+
+    if (escalaId) {
+      query = query.eq('escala_id', escalaId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn('Aviso ao consultar escalas_servico_auditoria:', error.message);
+      return [];
+    }
+
+    return (data || []).map((r: any) => ({
+      id: r.id,
+      escala_id: r.escala_id,
+      campo: r.campo,
+      valor_anterior: r.valor_anterior,
+      valor_novo: r.valor_novo,
+      origem: r.origem,
+      alterado_por: r.alterado_por,
+      alterado_em: r.alterado_em,
+    }));
+  } catch (err) {
+    console.warn('Erro ao carregar auditoria de escala:', err);
+    return [];
+  }
+}
+

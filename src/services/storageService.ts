@@ -55,10 +55,27 @@ export async function createOccurrence(
   const id = ensureUUID();
   const nowIso = new Date().toISOString();
 
+  // Snapshot do CG de despacho no momento da criação/despacho
+  let cgId = newOcc.cgGuarnicaoDespachoId;
+  let cgName = newOcc.cgGuarnicaoDespachoName;
+  if (!cgId && newOcc.assignedSquadId) {
+    try {
+      const cgInfo = await getActiveCgForSquadAtTime(newOcc.assignedSquadId, nowIso);
+      if (cgInfo.militarId) {
+        cgId = cgInfo.militarId;
+        cgName = cgInfo.name;
+      }
+    } catch (err) {
+      console.warn('Aviso ao obter snapshot do CG para despacho:', err);
+    }
+  }
+
   const fullOccurrence: Occurrence = {
     ...newOcc,
     id,
     protocol,
+    cgGuarnicaoDespachoId: cgId,
+    cgGuarnicaoDespachoName: cgName,
     createdAt: nowIso,
     updatedAt: nowIso,
     attendances: [],
@@ -92,7 +109,20 @@ export async function createOccurrence(
  * Atualização dos dados da ocorrência pelo COBOM
  */
 export async function updateOccurrence(updated: Occurrence): Promise<void> {
-  await updateOccurrenceInSupabase(updated);
+  let occToSave = { ...updated };
+  if (!occToSave.cgGuarnicaoDespachoId && occToSave.assignedSquadId) {
+    try {
+      const nowIso = new Date().toISOString();
+      const cgInfo = await getActiveCgForSquadAtTime(occToSave.assignedSquadId, nowIso);
+      if (cgInfo.militarId) {
+        occToSave.cgGuarnicaoDespachoId = cgInfo.militarId;
+        occToSave.cgGuarnicaoDespachoName = cgInfo.name;
+      }
+    } catch (err) {
+      console.warn('Aviso ao atualizar snapshot do CG de despacho:', err);
+    }
+  }
+  await updateOccurrenceInSupabase(occToSave);
 }
 
 /**
