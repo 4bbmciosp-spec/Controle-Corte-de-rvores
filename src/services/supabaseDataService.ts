@@ -4,6 +4,7 @@ import {
   AttendanceRecord, 
   OccurrencePhoto, 
   Squad, 
+  SquadMember,
   Platoon, 
   AppNotification,
   OccurrenceStatus,
@@ -66,17 +67,49 @@ export async function fetchSquadsFromSupabase(): Promise<Squad[]> {
 
   if (!data) return [];
 
-  return data.map(s => ({
-    id: s.id,
-    name: s.name,
-    callSign: s.call_sign,
-    unitText: s.unit_text || '',
-    platoonId: s.platoon_id || '',
-    commanderName: s.commander_name || 'Comandante da VTR',
-    currentShift: s.current_shift || 'Turno 24h',
-    status: (s.status || 'DISPONIVEL') as 'DISPONIVEL' | 'EM_OCORRENCIA' | 'MANUTENCAO',
-    activeMembersCount: s.active_members_count || 0,
-  }));
+  // Busca todos os militares que estão vinculados a alguma guarnição no momento,
+  // para montar a composição (members[]) de cada VTR.
+  const { data: militaresData, error: militaresError } = await supabase
+    .from('militares')
+    .select('id, matricula, posto_graduacao, nome_guerra, funcao_na_guarnicao, is_comandante, squad_atual_id')
+    .not('squad_atual_id', 'is', null);
+
+  if (militaresError) {
+    // Não derruba a tela de guarnições por causa disso — só loga o aviso.
+    // As VTRs continuam aparecendo, apenas sem a composição de efetivo.
+    console.warn('Aviso ao buscar militares vinculados às guarnições:', militaresError.message);
+  }
+
+  const membersBySquadId = new Map<string, SquadMember[]>();
+  (militaresData || []).forEach(m => {
+    if (!m.squad_atual_id) return;
+    const list = membersBySquadId.get(m.squad_atual_id) || [];
+    list.push({
+      id: m.id,
+      registrationNumber: m.matricula,
+      name: `${m.posto_graduacao} ${m.nome_guerra}`,
+      rank: m.posto_graduacao,
+      roleInSquad: m.funcao_na_guarnicao || 'COMBATENTE',
+      isCommander: Boolean(m.is_comandante),
+    });
+    membersBySquadId.set(m.squad_atual_id, list);
+  });
+
+  return data.map(s => {
+    const members = membersBySquadId.get(s.id) || [];
+    return {
+      id: s.id,
+      name: s.name,
+      callSign: s.call_sign,
+      unitText: s.unit_text || '',
+      platoonId: s.platoon_id || '',
+      commanderName: s.commander_name || 'Comandante da VTR',
+      currentShift: s.current_shift || 'Turno 24h',
+      status: (s.status || 'DISPONIVEL') as 'DISPONIVEL' | 'EM_OCORRENCIA' | 'MANUTENCAO',
+      activeMembersCount: members.length,
+      members,
+    };
+  });
 }
 
 /**
