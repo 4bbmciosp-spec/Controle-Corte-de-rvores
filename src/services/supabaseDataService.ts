@@ -84,12 +84,13 @@ export async function fetchSquadsFromSupabase(): Promise<Squad[]> {
  */
 export async function upsertSquadToSupabase(squad: Squad | Partial<Squad>): Promise<Squad> {
   if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
-  if (!squad.id || !squad.callSign) {
-    throw new Error('Dados da viatura incompletos: ID e Prefixo são obrigatórios.');
+  if (!squad.callSign) {
+    throw new Error('Dados da viatura incompletos: Prefixo (call sign) é obrigatório.');
   }
 
+  // Nunca envie um id gerado no cliente (ex: "squad-abc-794") — a coluna é UUID
+  // e o Postgres gera o valor real automaticamente via gen_random_uuid().
   const payload: any = {
-    id: squad.id,
     name: squad.name || `${squad.callSign} (e-193)`,
     call_sign: squad.callSign,
     unit_text: squad.unitText || '4º BBM - Santa Maria',
@@ -102,7 +103,7 @@ export async function upsertSquadToSupabase(squad: Squad | Partial<Squad>): Prom
 
   const { data, error } = await supabase
     .from('squads')
-    .upsert(payload, { onConflict: 'id' })
+    .upsert(payload, { onConflict: 'call_sign' })
     .select()
     .single();
 
@@ -110,15 +111,17 @@ export async function upsertSquadToSupabase(squad: Squad | Partial<Squad>): Prom
     throw new Error(`Falha ao salvar viatura/guarnição '${squad.callSign}' no Supabase: ${error.message}`);
   }
 
+  // Retorna a guarnição com o UUID REAL gerado pelo banco, para que quem
+  // chamou essa função possa atualizar o estado local com o id correto.
   return {
     id: data.id,
     name: data.name,
     callSign: data.call_sign,
     unitText: data.unit_text || '',
     platoonId: data.platoon_id || '',
-    commanderName: data.commander_name || 'Comandante da VTR',
+    commanderName: data.commander_name || 'A Definir',
     currentShift: data.current_shift || 'Turno 24h',
-    status: (data.status || 'DISPONIVEL') as 'DISPONIVEL' | 'EM_OCORRENCIA' | 'MANUTENCAO',
+    status: data.status,
     activeMembersCount: data.active_members_count || 0,
     members: squad.members || [],
   };
@@ -186,15 +189,16 @@ export async function registerEscalaServico(
   if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
 
   for (const squad of squads) {
-    await upsertSquadToSupabase(squad);
+    // upsertSquadToSupabase agora retorna a guarnição com o UUID real do banco.
+    const realSquad = await upsertSquadToSupabase(squad);
 
     if (squad.members && squad.members.length > 0) {
       for (const member of squad.members) {
         if (member.registrationNumber && /^\d+$/.test(member.registrationNumber.trim())) {
           await assignMilitarToSquad(
             member.registrationNumber,
-            squad.id,
-            squad.platoonId,
+            realSquad.id, // <- usa o UUID real, nunca o id falso do parser
+            realSquad.platoonId,
             member.roleInSquad,
             member.roleInSquad?.toUpperCase().includes('COMANDANTE') || squad.commanderName === member.name
           );

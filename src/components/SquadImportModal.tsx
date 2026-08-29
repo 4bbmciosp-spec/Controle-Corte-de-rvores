@@ -214,12 +214,13 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
       // Persiste no Supabase
       const targetSquad = updatedSquads.find(s => s.id === editingMember.squadId);
       if (targetSquad) {
-        await upsertSquadToSupabase(targetSquad);
+        const savedSquad = await upsertSquadToSupabase(targetSquad);
+        updatedSquads = updatedSquads.map(s => s.id === targetSquad.id ? { ...savedSquad, members: targetSquad.members } : s);
         if (newMemberObj.registrationNumber && /^\d+$/.test(newMemberObj.registrationNumber)) {
           await assignMilitarToSquad(
             newMemberObj.registrationNumber,
-            targetSquad.id,
-            targetSquad.platoonId,
+            savedSquad.id,
+            savedSquad.platoonId,
             newMemberObj.roleInSquad,
             editingMember.isCommander
           );
@@ -242,13 +243,15 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
       try {
         const updatedSquads = removeSquadMember(activeSquadsList, squadId, reg);
         const targetSquad = updatedSquads.find(s => s.id === squadId);
+        let finalSquads = updatedSquads;
         if (targetSquad) {
-          await upsertSquadToSupabase(targetSquad);
+          const savedSquad = await upsertSquadToSupabase(targetSquad);
+          finalSquads = updatedSquads.map(s => s.id === targetSquad.id ? { ...savedSquad, members: targetSquad.members } : s);
         }
         if (reg && /^\d+$/.test(reg)) {
           await assignMilitarToSquad(reg, null, null, undefined, false);
         }
-        notifyUpdated(updatedSquads, activeUsersList);
+        notifyUpdated(finalSquads, activeUsersList);
         setSuccessMsg(`Posto operacional removido da escala.`);
       } catch (err: any) {
         console.error(err);
@@ -263,10 +266,12 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
     try {
       const updatedSquads = setSquadCommander(activeSquadsList, squadId, commanderName);
       const targetSquad = updatedSquads.find(s => s.id === squadId);
+      let finalSquads = updatedSquads;
       if (targetSquad) {
-        await upsertSquadToSupabase(targetSquad);
+        const savedSquad = await upsertSquadToSupabase(targetSquad);
+        finalSquads = updatedSquads.map(s => s.id === targetSquad.id ? { ...savedSquad, members: targetSquad.members } : s);
       }
-      notifyUpdated(updatedSquads, activeUsersList);
+      notifyUpdated(finalSquads, activeUsersList);
       setSuccessMsg(`Comando da guarnição atualizado.`);
     } catch (err: any) {
       console.error(err);
@@ -286,10 +291,8 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
     try {
       const plat = platoons.find(p => p.id === newSquadPlatoonId);
       const unitText = plat ? `4º BBM / 1ª CIA / ${plat.name.split('-')[0].trim()}` : '4º BBM - Santa Maria';
-      const squadId = `squad-${newSquadCallSign.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 
-      const newSquadObj: Squad = {
-        id: squadId,
+      const newSquadObj: Partial<Squad> = {
         name: `${newSquadCallSign.trim().toUpperCase()} (${plat?.name?.split('-')[0]?.trim() || 'Guarnição'})`,
         callSign: newSquadCallSign.trim().toUpperCase(),
         unitText,
@@ -301,13 +304,14 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
         members: []
       };
 
-      await upsertSquadToSupabase(newSquadObj);
+      // upsertSquadToSupabase grava no banco e retorna o objeto com o UUID real gerado.
+      const realSquad = await upsertSquadToSupabase(newSquadObj);
 
-      const updatedSquads = addNewSquad(activeSquadsList, newSquadObj);
+      const updatedSquads = addNewSquad(activeSquadsList, realSquad);
       notifyUpdated(updatedSquads, activeUsersList);
       setIsAddingSquad(false);
       setNewSquadCallSign('');
-      setSuccessMsg(`Viatura ${newSquadObj.callSign} cadastrada com sucesso no Supabase.`);
+      setSuccessMsg(`Viatura ${realSquad.callSign} cadastrada com sucesso no Supabase.`);
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err?.message || 'Falha ao cadastrar viatura no Supabase.');
