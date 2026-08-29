@@ -25,25 +25,33 @@ export const testSupabaseConnection = async (): Promise<{ success: boolean; mess
       return { success: false, message: 'Supabase URL ou chave pública não configurada.' };
     }
 
-    // Try to query a public table or auth health
-    const { data, error } = await supabase.from('militares').select('count', { count: 'exact', head: true });
-    
+    // Query normal (não HEAD) para garantir que o corpo do erro venha preenchido
+    const { data, error, status } = await supabase
+      .from('militares')
+      .select('matricula')
+      .limit(1);
+
     if (error) {
-      // If table 'militares' is protected by RLS or not accessible anonymously, test general REST response
-      if (error.code === 'PGRST301' || error.message.includes('permission denied') || error.code === '42501') {
-        return { 
-          success: true, 
-          message: 'Conectado com sucesso ao Supabase! (RLS ativo para acesso anônimo)',
-          data: { rlsProtected: true }
+      const isPermissionIssue =
+        error.code === 'PGRST301' ||
+        error.code === '42501' ||
+        status === 401 ||
+        (error.message ?? '').toLowerCase().includes('permission denied');
+
+      if (isPermissionIssue) {
+        return {
+          success: true,
+          message: 'Conectado com sucesso ao Supabase! (RLS ativo — acesso anônimo bloqueado corretamente)',
+          data: { rlsProtected: true },
         };
       }
       return { success: false, message: `Erro ao conectar: ${error.message}` };
     }
 
-    return { 
-      success: true, 
+    return {
+      success: true,
       message: 'Conexão com o Supabase estabelecida com sucesso!',
-      data 
+      data,
     };
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
