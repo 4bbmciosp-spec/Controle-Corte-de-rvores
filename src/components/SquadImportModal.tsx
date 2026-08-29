@@ -13,6 +13,7 @@ import {
   assignMilitarToSquad,
   registerEscalaServico
 } from '../services/storageService';
+import { fetchMilitaresRosterFromSupabase, MilitarRosterEntry } from '../services/supabaseDataService';
 import { 
   X, 
   Truck, 
@@ -94,6 +95,20 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
     isCommander: boolean;
   } | null>(null);
 
+  const [militaresRoster, setMilitaresRoster] = useState<MilitarRosterEntry[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterError, setRosterError] = useState('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setRosterLoading(true);
+    fetchMilitaresRosterFromSupabase()
+      .then(list => { if (!cancelled) setMilitaresRoster(list); })
+      .catch(err => { if (!cancelled) setRosterError(err?.message || 'Falha ao carregar lista de militares.'); })
+      .finally(() => { if (!cancelled) setRosterLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   const [isAddingSquad, setIsAddingSquad] = useState(false);
   const [newSquadCallSign, setNewSquadCallSign] = useState('');
   const [newSquadPlatoonId, setNewSquadPlatoonId] = useState(platoons[0]?.id || '');
@@ -157,9 +172,9 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
       originalSquadId: squadId,
       originalReg: '',
       isNew: true,
-      registrationNumber: `FUN-0${Math.floor(Math.random() * 90) + 10}`,
-      rank: 'SD',
-      warName: 'Operador de Linha',
+      registrationNumber: '', // precisa ser preenchido escolhendo um militar real
+      rank: '',
+      warName: '',
       roleInSquad: 'CHEFE DE LINHA DIREITA',
       shiftHours: 24,
       shiftStart: '08:00',
@@ -169,14 +184,15 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
   };
 
   const handleOpenEditMember = (squadId: string, member: SquadMember, currentSquadCommander: string) => {
+    const [maybeRank, ...rest] = (member.name || '').split(' ');
     setEditingMember({
       squadId,
       originalSquadId: squadId,
       originalReg: member.registrationNumber,
       isNew: false,
       registrationNumber: member.registrationNumber,
-      rank: 'SD',
-      warName: member.roleInSquad,
+      rank: member.rank || maybeRank || '',
+      warName: rest.join(' ') || member.name || '',
       roleInSquad: member.roleInSquad,
       shiftHours: member.shiftHours || 24,
       shiftStart: member.shiftStart || '08:00',
@@ -191,10 +207,16 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
     setErrorMsg('');
     setSuccessMsg('');
 
+    if (!editingMember.registrationNumber) {
+      setErrorMsg('Selecione um militar real da lista antes de salvar o posto.');
+      return;
+    }
+
     const roleTitle = editingMember.roleInSquad.trim();
     const newMemberObj: SquadMember = {
-      registrationNumber: editingMember.registrationNumber.trim() || 'FUN-01',
-      name: roleTitle,
+      registrationNumber: editingMember.registrationNumber.trim(),
+      name: `${editingMember.rank} ${editingMember.warName}`.trim(),
+      rank: editingMember.rank,
       roleInSquad: roleTitle,
       shiftHours: editingMember.shiftHours,
       shiftStart: editingMember.shiftStart,
@@ -725,14 +747,55 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-slate-700 font-bold mb-1">Código / Matrícula do Posto</label>
+                    <label className="block text-slate-700 font-bold mb-1">Militar *</label>
                     <input
+                      list="militares-roster-datalist"
                       type="text"
-                      value={editingMember.registrationNumber}
-                      onChange={(e) => setEditingMember({ ...editingMember, registrationNumber: e.target.value })}
-                      placeholder="Ex: FUN-01 ou MAT-2693"
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900 font-mono"
+                      value={
+                        editingMember.registrationNumber
+                          ? `${editingMember.rank} ${editingMember.warName} (${editingMember.registrationNumber})`
+                          : editingMember.warName
+                      }
+                      onChange={(e) => {
+                        const typed = e.target.value;
+                        // Tenta casar o texto digitado/selecionado com um militar real da lista
+                        const match = militaresRoster.find(
+                          m => `${m.posto} ${m.nome} (${m.matricula})` === typed || `${m.posto} ${m.nome}`.toLowerCase() === typed.toLowerCase()
+                        );
+                        if (match) {
+                          setEditingMember({
+                            ...editingMember,
+                            registrationNumber: match.matricula,
+                            rank: match.posto,
+                            warName: match.nome,
+                          });
+                        } else {
+                          // Ainda digitando, sem match exato — limpa a matrícula até escolher alguém real da lista
+                          setEditingMember({ ...editingMember, registrationNumber: '', rank: '', warName: typed });
+                        }
+                      }}
+                      placeholder={rosterLoading ? 'Carregando militares...' : 'Digite o nome de guerra do militar...'}
+                      className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900 font-semibold"
+                      autoComplete="off"
                     />
+                    <datalist id="militares-roster-datalist">
+                      {militaresRoster.map(m => (
+                        <option key={m.matricula} value={`${m.posto} ${m.nome} (${m.matricula})`} />
+                      ))}
+                    </datalist>
+                    {rosterError && (
+                      <p className="text-red-600 text-[11px] mt-1">{rosterError}</p>
+                    )}
+                    {!editingMember.registrationNumber && editingMember.warName && !rosterLoading && (
+                      <p className="text-amber-600 text-[11px] mt-1">
+                        Nenhum militar encontrado com esse nome. Selecione um nome da lista para vincular corretamente.
+                      </p>
+                    )}
+                    {editingMember.registrationNumber && (
+                      <p className="text-emerald-700 text-[11px] mt-1">
+                        Matrícula {editingMember.registrationNumber} selecionada.
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -772,7 +835,8 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-1.5 bg-red-800 hover:bg-red-700 text-white rounded-lg font-bold shadow-sm cursor-pointer"
+                    disabled={!editingMember.registrationNumber}
+                    className="px-4 py-1.5 bg-red-800 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-bold shadow-sm cursor-pointer"
                   >
                     Salvar Posto na Guarnição
                   </button>

@@ -112,6 +112,37 @@ export async function fetchSquadsFromSupabase(): Promise<Squad[]> {
   });
 }
 
+export interface MilitarRosterEntry {
+  matricula: string;
+  posto: string;
+  nome: string;
+  squadAtualId: string | null;
+}
+
+/**
+ * Busca a lista completa de militares (posto + nome de guerra) para
+ * preencher seletores de "quem é essa pessoa" em telas de gestão de guarnição.
+ */
+export async function fetchMilitaresRosterFromSupabase(): Promise<MilitarRosterEntry[]> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
+
+  const { data, error } = await supabase
+    .from('militares')
+    .select('matricula, posto_graduacao, nome_guerra, squad_atual_id')
+    .order('nome_guerra', { ascending: true });
+
+  if (error) {
+    throw new Error(`Erro ao buscar lista de militares no Supabase: ${error.message}`);
+  }
+
+  return (data || []).map(m => ({
+    matricula: m.matricula,
+    posto: m.posto_graduacao || '',
+    nome: m.nome_guerra || '',
+    squadAtualId: m.squad_atual_id,
+  }));
+}
+
 /**
  * Salva ou atualiza uma Guarnição/Viatura (squad) no Supabase (Exclusivo COBOM)
  */
