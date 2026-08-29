@@ -118,21 +118,29 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
 
     setIsProcessing(true);
     try {
-      // 1. Faz parsing do texto do e-193
       const result = parseAndRegisterE193Roster(rawText, activeSquadsList, platoons);
       if (!result.squads || result.squads.length === 0) {
         throw new Error('Nenhuma viatura válida foi identificada no texto colado. Verifique se o formato do e-193 inclui prefixos como ABT-1496, ABTR, ABS etc.');
       }
 
-      // 2. Grava todas as guarnições e militares no Supabase
-      await registerEscalaServico(result.squads, platoons);
+      const summary = await registerEscalaServico(result.squads, platoons);
 
-      // 3. Notifica atualização e exibe sucesso
+      // Notifica atualização e sincroniza estado
       notifyUpdated(result.squads, result.users);
       if (onImportSuccess) {
         onImportSuccess();
       }
-      setSuccessMsg(`Sucesso! ${result.squads.length} guarnições e ${result.users.length} militares gravados com sucesso no Supabase.`);
+
+      if (summary.errors.length > 0) {
+        // Mostra sucesso parcial COM os erros explícitos — nunca esconder falha.
+        setErrorMsg(
+          `Processado com ${summary.errors.length} problema(s):\n` +
+          summary.errors.join('\n')
+        );
+      }
+      setSuccessMsg(
+        `${summary.squadsOk} guarnição(ões) e ${summary.membersOk} militar(es) gravados com sucesso no Supabase.`
+      );
       setActiveTab('VIEW_ROSTER');
     } catch (err: any) {
       console.error('Erro ao processar e salvar escala do e-193:', err);
@@ -423,7 +431,7 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
               <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
               <div>
                 <div className="font-bold text-red-950">Falha ao processar operação:</div>
-                <div className="font-medium text-red-900 mt-0.5">{errorMsg}</div>
+                <div className="font-medium text-red-900 mt-0.5 whitespace-pre-line leading-relaxed">{errorMsg}</div>
               </div>
             </div>
             <button 

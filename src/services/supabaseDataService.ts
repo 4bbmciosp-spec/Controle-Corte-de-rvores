@@ -167,13 +167,20 @@ export async function assignMilitarToSquad(
   if (funcao) updatePayload.funcao_na_guarnicao = funcao;
   if (typeof isComandante === 'boolean') updatePayload.is_comandante = isComandante;
 
-  const { error } = await supabase
+  const { error, data } = await supabase
     .from('militares')
     .update(updatePayload)
-    .eq('matricula', cleanMatricula);
+    .eq('matricula', cleanMatricula)
+    .select('id');
 
   if (error) {
-    console.warn(`Aviso ao atualizar lotação do militar ${cleanMatricula}:`, error.message);
+    // Antes: console.warn + return true (falha silenciosa). Agora: erro explícito.
+    throw new Error(`Falha ao vincular militar (matrícula ${cleanMatricula}) à guarnição: ${error.message}`);
+  }
+
+  if (!data || data.length === 0) {
+    // UPDATE rodou sem erro, mas nenhuma linha bateu — matrícula não existe no banco.
+    throw new Error(`Matrícula ${cleanMatricula} não encontrada em 'militares'. O militar precisa estar cadastrado antes de ser vinculado à guarnição.`);
   }
 
   return true;
@@ -185,27 +192,44 @@ export async function assignMilitarToSquad(
 export async function registerEscalaServico(
   squads: Squad[],
   platoons?: Platoon[]
-): Promise<void> {
+): Promise<{ squadsOk: number; membersOk: number; errors: string[] }> {
   if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
 
+  const errors: string[] = [];
+  let squadsOk = 0;
+  let membersOk = 0;
+
   for (const squad of squads) {
-    // upsertSquadToSupabase agora retorna a guarnição com o UUID real do banco.
-    const realSquad = await upsertSquadToSupabase(squad);
+    let realSquad: Squad;
+    try {
+      realSquad = await upsertSquadToSupabase(squad);
+      squadsOk++;
+    } catch (err: any) {
+      errors.push(`Guarnição ${squad.callSign}: ${err?.message || 'erro desconhecido'}`);
+      continue; // sem guarnição real, não há como vincular os militares dela
+    }
 
     if (squad.members && squad.members.length > 0) {
       for (const member of squad.members) {
         if (member.registrationNumber && /^\d+$/.test(member.registrationNumber.trim())) {
-          await assignMilitarToSquad(
-            member.registrationNumber,
-            realSquad.id, // <- usa o UUID real, nunca o id falso do parser
-            realSquad.platoonId,
-            member.roleInSquad,
-            member.roleInSquad?.toUpperCase().includes('COMANDANTE') || squad.commanderName === member.name
-          );
+          try {
+            await assignMilitarToSquad(
+              member.registrationNumber,
+              realSquad.id,
+              realSquad.platoonId,
+              member.roleInSquad,
+              member.roleInSquad?.toUpperCase().includes('COMANDANTE') || squad.commanderName === member.name
+            );
+            membersOk++;
+          } catch (err: any) {
+            errors.push(`Militar ${member.registrationNumber} (${member.name}) na guarnição ${squad.callSign}: ${err?.message || 'erro desconhecido'}`);
+          }
         }
       }
     }
   }
+
+  return { squadsOk, membersOk, errors };
 }
 
 /**
