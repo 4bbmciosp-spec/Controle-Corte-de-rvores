@@ -1,692 +1,372 @@
-import React, { useState } from 'react';
-import { Squad, User, Platoon, SquadMember } from '../types';
-import { 
-  parseAndRegisterE193Roster,
-  addSquadMember,
-  updateSquadMember,
-  removeSquadMember,
-  addNewSquad,
-  removeSquad,
-  setSquadCommander,
-  upsertSquadToSupabase,
-  deleteSquadFromSupabase,
-  assignMilitarToSquad,
-  registerEscalaServico
-} from '../services/storageService';
-import { fetchMilitaresRosterFromSupabase, MilitarRosterEntry } from '../services/supabaseDataService';
-import { 
-  X, 
-  Truck, 
-  FileText, 
-  CheckCircle2, 
-  AlertCircle, 
-  Sparkles, 
-  UserCheck, 
-  RefreshCw,
+import React, { useEffect, useMemo, useState } from 'react';
+import { Platoon, GuarnicaoEmServicoRow, E193ImportEntry, EscalaAuditoriaEntry } from '../types';
+import { parseE193RosterText } from '../services/e193Parser';
+import { determinarCgPorIntervalo, EscalaCandidate } from '../services/commandHierarchyService';
+import {
+  fetchGuarnicoesEmServico,
+  importEscalaE193Rpc,
+  editarCgManualRpc,
+  fetchEscalasAuditoria,
+  fetchEscalaCompletaDoDia,
+  EscalaDiaRow,
+} from '../services/supabaseDataService';
+import {
+  X,
+  Truck,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
   Shield,
   Layers,
   Clock,
+  History,
+  Pencil,
   Plus,
-  Edit2,
   Trash2,
+  RefreshCw,
   Award,
-  Users,
-  ArrowRightLeft,
-  ChevronDown
 } from 'lucide-react';
 
 interface SquadImportModalProps {
-  currentSquads?: Squad[];
-  squads?: Squad[];
-  currentUsers?: User[];
-  users?: User[];
+  // Mantidos por compatibilidade com quem chama o componente (App.tsx),
+  // mas a fonte de verdade da composição/CG passou a ser sempre
+  // v_guarnicao_em_servico, consultada internamente por este componente.
+  squads?: any[];
+  users?: any[];
+  currentSquads?: any[];
+  currentUsers?: any[];
   platoons?: Platoon[];
   onClose: () => void;
   onImportSuccess?: () => void;
-  onSquadsUpdated?: (squads: Squad[], users: User[], platoons: Platoon[]) => void;
+  onSquadsUpdated?: (squads: any[], users: any[], platoons: any[]) => void;
 }
 
-const COMMON_RANKS = ['SD', 'CB', '3º SGT', '2º SGT', '1º SGT', 'SUBTEN', '2º TEN', '1º TEN', 'CAP QOEM', 'MAJ'];
+type TabKey = 'ESCALA' | 'IMPORTAR' | 'HISTORICO';
 
-const COMMON_ROLES = [
-  'COMANDANTE DE GUARNIÇÃO',
-  'COV / OPERADOR / CONDUTOR',
-  'CHEFE DE LINHA DIREITA',
-  'CHEFE DE LINHA ESQUERDA',
-  'AUXILIAR DE LINHA DIREITA',
-  'AUXILIAR DE LINHA ESQUERDA',
-  'CINOTÉCNICO',
-  'MERGULHADOR',
-  'OPERADOR COBOM',
-  'SOCORRISTA / RESGATISTA'
-];
+function todayIso(): string {
+  return new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
+}
+
+function formatDateTime(iso?: string): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
 
 export const SquadImportModal: React.FC<SquadImportModalProps> = ({
-  currentSquads,
-  squads,
-  currentUsers,
-  users,
   platoons = [],
   onClose,
   onImportSuccess,
-  onSquadsUpdated,
 }) => {
-  const [activeSquadsList, setActiveSquadsList] = useState<Squad[]>(currentSquads || squads || []);
-  const [activeUsersList, setActiveUsersList] = useState<User[]>(currentUsers || users || []);
-  const [rawText, setRawText] = useState('');
-  const [activeTab, setActiveTab] = useState<'VIEW_ROSTER' | 'PASTE'>('VIEW_ROSTER');
+  const [activeTab, setActiveTab] = useState<TabKey>('ESCALA');
+  const [guarnicoes, setGuarnicoes] = useState<GuarnicaoEmServicoRow[]>([]);
+  const [loadingEscala, setLoadingEscala] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
 
-  // Sub-modals for manual management
-  const [editingMember, setEditingMember] = useState<{
-    squadId: string;
-    originalSquadId: string;
-    originalReg: string;
-    isNew: boolean;
-    registrationNumber: string;
-    rank: string;
-    warName: string;
-    roleInSquad: string;
-    shiftHours: number;
-    shiftStart: string;
-    shiftEnd: string;
-    isCommander: boolean;
+  // Importação e-193
+  const [rawText, setRawText] = useState('');
+  const [previewEntries, setPreviewEntries] = useState<E193ImportEntry[] | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Submodal: alterar CG manualmente
+  const [cgEditSquadId, setCgEditSquadId] = useState<string | null>(null);
+
+  // Submodal: incluir/editar/remover posto manualmente na escala do dia
+  const [manualEditTarget, setManualEditTarget] = useState<{
+    squadId: string | null;
+    callSign: string;
+    platoonId: string;
   } | null>(null);
 
-  const [militaresRoster, setMilitaresRoster] = useState<MilitarRosterEntry[]>([]);
-  const [rosterLoading, setRosterLoading] = useState(false);
-  const [rosterError, setRosterError] = useState('');
+  // Histórico / auditoria
+  const [auditoria, setAuditoria] = useState<EscalaAuditoriaEntry[]>([]);
+  const [loadingAuditoria, setLoadingAuditoria] = useState(false);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    setRosterLoading(true);
-    fetchMilitaresRosterFromSupabase()
-      .then(list => { if (!cancelled) setMilitaresRoster(list); })
-      .catch(err => { if (!cancelled) setRosterError(err?.message || 'Falha ao carregar lista de militares.'); })
-      .finally(() => { if (!cancelled) setRosterLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
-
-  const [isAddingSquad, setIsAddingSquad] = useState(false);
-  const [newSquadCallSign, setNewSquadCallSign] = useState('');
-  const [newSquadPlatoonId, setNewSquadPlatoonId] = useState(platoons[0]?.id || '');
-  const [newSquadCommander, setNewSquadCommander] = useState('A Definir');
-  const [newSquadShift, setNewSquadShift] = useState('Turno 24h (08:00 às 08:00)');
-
-  const notifyUpdated = (updatedSquads: Squad[], updatedUsers: User[]) => {
-    setActiveSquadsList(updatedSquads);
-    setActiveUsersList(updatedUsers);
-    if (onSquadsUpdated) {
-      onSquadsUpdated(updatedSquads, updatedUsers, platoons);
+  const loadEscala = async () => {
+    setLoadingEscala(true);
+    setErrorMsg('');
+    try {
+      const rows = await fetchGuarnicoesEmServico();
+      setGuarnicoes(rows);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Falha ao carregar a escala ativa.');
+    } finally {
+      setLoadingEscala(false);
     }
   };
 
-  const handleProcessImport = async () => {
+  useEffect(() => {
+    loadEscala();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'HISTORICO') {
+      setLoadingAuditoria(true);
+      fetchEscalasAuditoria()
+        .then(setAuditoria)
+        .catch(err => setErrorMsg(err?.message || 'Falha ao carregar histórico.'))
+        .finally(() => setLoadingAuditoria(false));
+    }
+  }, [activeTab]);
+
+  const guarnicoesPorSquad = useMemo(() => {
+    const map = new Map<string, GuarnicaoEmServicoRow[]>();
+    guarnicoes.forEach(g => {
+      const list = map.get(g.squad_id) || [];
+      list.push(g);
+      map.set(g.squad_id, list);
+    });
+    return map;
+  }, [guarnicoes]);
+
+  // ---------- Preview da importação e-193 ----------
+  const previewBySquad = useMemo(() => {
+    const map = new Map<string, E193ImportEntry[]>();
+    (previewEntries || []).forEach(e => {
+      const list = map.get(e.call_sign) || [];
+      list.push(e);
+      map.set(e.call_sign, list);
+    });
+    return map;
+  }, [previewEntries]);
+
+  // Estimativa client-side de quem será o CG, só para o COBOM conferir antes de
+  // confirmar. A decisão DEFINITIVA é sempre recalculada no servidor por
+  // fn_calcular_cg_guarnicao logo após a importação — nunca o contrário.
+  const estimatedCgByCallSign = useMemo(() => {
+    const result = new Map<string, string>(); // call_sign -> matrícula estimada como CG
+    previewBySquad.forEach((entries, callSign) => {
+      const candidatos: EscalaCandidate[] = entries.map(e => ({
+        militarId: e.matricula,
+        matricula: e.matricula,
+        postoGraduacao: e.posto_graduacao,
+        nomeGuerra: e.nome_guerra,
+        funcao: e.funcao_na_guarnicao,
+        inicioTurno: e.inicio_turno,
+        fimTurno: e.fim_turno,
+      }));
+      const det = determinarCgPorIntervalo(candidatos);
+      for (const [militarId, res] of det.entries()) {
+        if (res.isCg) {
+          result.set(callSign, militarId);
+          break;
+        }
+      }
+    });
+    return result;
+  }, [previewBySquad]);
+
+  const handleAnalyze = () => {
     setErrorMsg('');
     setSuccessMsg('');
     if (!rawText.trim()) {
-      setErrorMsg('Por favor, cole os dados das guarnições do sistema e-193.');
+      setErrorMsg('Cole o texto copiado do e-193 antes de analisar.');
       return;
     }
-
-    setIsProcessing(true);
-    try {
-      const result = parseAndRegisterE193Roster(rawText, activeSquadsList, platoons);
-      if (!result.squads || result.squads.length === 0) {
-        throw new Error('Nenhuma viatura válida foi identificada no texto colado. Verifique se o formato do e-193 inclui prefixos como ABT-1496, ABTR, ABS etc.');
-      }
-
-      const summary = await registerEscalaServico(result.squads, platoons);
-
-      // Notifica atualização e sincroniza estado
-      notifyUpdated(result.squads, result.users);
-      if (onImportSuccess) {
-        onImportSuccess();
-      }
-
-      if (summary.errors.length > 0) {
-        // Mostra sucesso parcial COM os erros explícitos — nunca esconder falha.
-        setErrorMsg(
-          `Processado com ${summary.errors.length} problema(s):\n` +
-          summary.errors.join('\n')
-        );
-      }
-      setSuccessMsg(
-        `${summary.squadsOk} guarnição(ões) e ${summary.membersOk} militar(es) gravados com sucesso no Supabase.`
+    const entries = parseE193RosterText(rawText);
+    if (entries.length === 0) {
+      setErrorMsg(
+        'Nenhum militar foi identificado no texto colado. Verifique se as colunas ' +
+        '(matrícula, posto/nome, função, carga horária, início, fim) vieram separadas por TAB.'
       );
-      setActiveTab('VIEW_ROSTER');
+      setPreviewEntries(null);
+      return;
+    }
+    setPreviewEntries(entries);
+  };
+
+  const handleConfirmImport = async () => {
+    if (!previewEntries || previewEntries.length === 0) return;
+    setIsImporting(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const result = await importEscalaE193Rpc(previewEntries);
+      setSuccessMsg(
+        `Escala importada com sucesso: ${result.linhas_importadas} registro(s) de escala gravados, ` +
+        `${result.militares_criados} militar(es) novo(s) cadastrado(s) automaticamente, ` +
+        `${result.guarnicoes_afetadas} guarnição(ões) com o Comandante de Guarnição recalculado pelo servidor.`
+      );
+      setPreviewEntries(null);
+      setRawText('');
+      await loadEscala();
+      setActiveTab('ESCALA');
+      onImportSuccess?.();
     } catch (err: any) {
-      console.error('Erro ao processar e salvar escala do e-193:', err);
-      setErrorMsg(err?.message || 'Erro ao processar ou gravar dados do e-193 no Supabase. Verifique se seu usuário tem perfil COBOM para escrita.');
+      console.error(err);
+      setErrorMsg(err?.message || 'Falha ao gravar a escala importada no Supabase.');
     } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Open Edit/Add Member Form
-  const handleOpenAddMember = (squadId: string) => {
-    setEditingMember({
-      squadId,
-      originalSquadId: squadId,
-      originalReg: '',
-      isNew: true,
-      registrationNumber: '', // precisa ser preenchido escolhendo um militar real
-      rank: '',
-      warName: '',
-      roleInSquad: 'CHEFE DE LINHA DIREITA',
-      shiftHours: 24,
-      shiftStart: '08:00',
-      shiftEnd: '08:00',
-      isCommander: false
-    });
-  };
-
-  const handleOpenEditMember = (squadId: string, member: SquadMember, currentSquadCommander: string) => {
-    const [maybeRank, ...rest] = (member.name || '').split(' ');
-    setEditingMember({
-      squadId,
-      originalSquadId: squadId,
-      originalReg: member.registrationNumber,
-      isNew: false,
-      registrationNumber: member.registrationNumber,
-      rank: member.rank || maybeRank || '',
-      warName: rest.join(' ') || member.name || '',
-      roleInSquad: member.roleInSquad,
-      shiftHours: member.shiftHours || 24,
-      shiftStart: member.shiftStart || '08:00',
-      shiftEnd: member.shiftEnd || '08:00',
-      isCommander: member.roleInSquad.toUpperCase().includes('COMANDANTE') || member.name === currentSquadCommander
-    });
-  };
-
-  const handleSaveMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingMember) return;
-    setErrorMsg('');
-    setSuccessMsg('');
-
-    if (!editingMember.registrationNumber) {
-      setErrorMsg('Selecione um militar real da lista antes de salvar o posto.');
-      return;
-    }
-
-    const roleTitle = editingMember.roleInSquad.trim();
-    const newMemberObj: SquadMember = {
-      registrationNumber: editingMember.registrationNumber.trim(),
-      name: `${editingMember.rank} ${editingMember.warName}`.trim(),
-      rank: editingMember.rank,
-      roleInSquad: roleTitle,
-      shiftHours: editingMember.shiftHours,
-      shiftStart: editingMember.shiftStart,
-      shiftEnd: editingMember.shiftEnd
-    };
-
-    try {
-      let updatedSquads: Squad[];
-      // If transferring to a different squad or changing registration
-      if (!editingMember.isNew && editingMember.originalSquadId !== editingMember.squadId) {
-        const withoutOld = removeSquadMember(activeSquadsList, editingMember.originalSquadId, editingMember.originalReg);
-        updatedSquads = addSquadMember(withoutOld, editingMember.squadId, newMemberObj, editingMember.isCommander);
-      } else if (editingMember.isNew) {
-        updatedSquads = addSquadMember(activeSquadsList, editingMember.squadId, newMemberObj, editingMember.isCommander);
-      } else {
-        updatedSquads = updateSquadMember(
-          activeSquadsList,
-          editingMember.squadId, 
-          editingMember.originalReg, 
-          newMemberObj, 
-          editingMember.isCommander
-        );
-      }
-
-      // Persiste no Supabase
-      const targetSquad = updatedSquads.find(s => s.id === editingMember.squadId);
-      if (targetSquad) {
-        const savedSquad = await upsertSquadToSupabase(targetSquad);
-        updatedSquads = updatedSquads.map(s => s.id === targetSquad.id ? { ...savedSquad, members: targetSquad.members } : s);
-        if (newMemberObj.registrationNumber && /^\d+$/.test(newMemberObj.registrationNumber)) {
-          await assignMilitarToSquad(
-            newMemberObj.registrationNumber,
-            savedSquad.id,
-            savedSquad.platoonId,
-            newMemberObj.roleInSquad,
-            editingMember.isCommander
-          );
-        }
-      }
-
-      notifyUpdated(updatedSquads, activeUsersList);
-      setEditingMember(null);
-      setSuccessMsg(`Posto operacional ${roleTitle} atualizado na viatura com sucesso.`);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err?.message || 'Falha ao salvar dados do posto no Supabase.');
-    }
-  };
-
-  const handleDeleteMember = async (squadId: string, reg: string, name: string) => {
-    setErrorMsg('');
-    setSuccessMsg('');
-    if (confirm(`Deseja remover o posto ${name} (${reg}) da viatura?`)) {
-      try {
-        const updatedSquads = removeSquadMember(activeSquadsList, squadId, reg);
-        const targetSquad = updatedSquads.find(s => s.id === squadId);
-        let finalSquads = updatedSquads;
-        if (targetSquad) {
-          const savedSquad = await upsertSquadToSupabase(targetSquad);
-          finalSquads = updatedSquads.map(s => s.id === targetSquad.id ? { ...savedSquad, members: targetSquad.members } : s);
-        }
-        if (reg && /^\d+$/.test(reg)) {
-          await assignMilitarToSquad(reg, null, null, undefined, false);
-        }
-        notifyUpdated(finalSquads, activeUsersList);
-        setSuccessMsg(`Posto operacional removido da escala.`);
-      } catch (err: any) {
-        console.error(err);
-        setErrorMsg(err?.message || 'Falha ao remover posto da viatura no Supabase.');
-      }
-    }
-  };
-
-  const handleSetCommander = async (squadId: string, commanderName: string) => {
-    setErrorMsg('');
-    setSuccessMsg('');
-    try {
-      const updatedSquads = setSquadCommander(activeSquadsList, squadId, commanderName);
-      const targetSquad = updatedSquads.find(s => s.id === squadId);
-      let finalSquads = updatedSquads;
-      if (targetSquad) {
-        const savedSquad = await upsertSquadToSupabase(targetSquad);
-        finalSquads = updatedSquads.map(s => s.id === targetSquad.id ? { ...savedSquad, members: targetSquad.members } : s);
-      }
-      notifyUpdated(finalSquads, activeUsersList);
-      setSuccessMsg(`Comando da guarnição atualizado.`);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err?.message || 'Falha ao atualizar comandante no Supabase.');
-    }
-  };
-
-  const handleSaveNewSquad = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg('');
-    setSuccessMsg('');
-    if (!newSquadCallSign.trim()) {
-      setErrorMsg('Informe o prefixo da viatura (ex: ABT-1999).');
-      return;
-    }
-
-    try {
-      const plat = platoons.find(p => p.id === newSquadPlatoonId);
-      const unitText = plat ? `4º BBM / 1ª CIA / ${plat.name.split('-')[0].trim()}` : '4º BBM - Santa Maria';
-
-      const newSquadObj: Partial<Squad> = {
-        name: `${newSquadCallSign.trim().toUpperCase()} (${plat?.name?.split('-')[0]?.trim() || 'Guarnição'})`,
-        callSign: newSquadCallSign.trim().toUpperCase(),
-        unitText,
-        platoonId: newSquadPlatoonId,
-        commanderName: newSquadCommander || 'A Definir',
-        currentShift: newSquadShift,
-        status: 'DISPONIVEL',
-        activeMembersCount: 0,
-        members: []
-      };
-
-      // upsertSquadToSupabase grava no banco e retorna o objeto com o UUID real gerado.
-      const realSquad = await upsertSquadToSupabase(newSquadObj);
-
-      const updatedSquads = addNewSquad(activeSquadsList, realSquad);
-      notifyUpdated(updatedSquads, activeUsersList);
-      setIsAddingSquad(false);
-      setNewSquadCallSign('');
-      setSuccessMsg(`Viatura ${realSquad.callSign} cadastrada com sucesso no Supabase.`);
-    } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err?.message || 'Falha ao cadastrar viatura no Supabase.');
-    }
-  };
-
-  const handleDeleteSquad = async (squadId: string, callSign: string) => {
-    setErrorMsg('');
-    setSuccessMsg('');
-    if (confirm(`Deseja remover a viatura ${callSign} da escala do dia?`)) {
-      try {
-        await deleteSquadFromSupabase(squadId);
-        const updatedSquads = removeSquad(activeSquadsList, squadId);
-        notifyUpdated(updatedSquads, activeUsersList);
-        setSuccessMsg(`Viatura ${callSign} removida com sucesso do Supabase.`);
-      } catch (err: any) {
-        console.error(err);
-        setErrorMsg(err?.message || 'Falha ao remover viatura no Supabase.');
-      }
+      setIsImporting(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-[1500] bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
       <div className="relative w-full max-w-5xl bg-white border border-slate-300 rounded-xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col text-slate-800">
-        
-        {/* Modal Header */}
-        <div className="px-5 py-3.5 bg-red-800 text-white border-b border-red-900 flex items-center justify-between">
+
+        {/* Header */}
+        <div className="px-5 py-3.5 bg-red-800 text-white border-b border-red-900 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center text-red-800 shadow font-black">
+            <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center shadow">
               <Truck className="w-5 h-5 text-red-700" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-white text-base sm:text-lg">
-                  Gestão da Escala de Guarnições (e-193)
-                </h3>
-                <span className="px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-200 font-mono font-bold border border-red-700">
-                  4º BBM - Santa Maria
-                </span>
-              </div>
+              <h3 className="font-extrabold text-white text-base sm:text-lg">Escala de Serviço (e-193)</h3>
               <p className="text-xs text-red-100 font-medium">
-                Vínculo obrigatório: Pelotão (PelBM) ➔ Viatura (VTR) ➔ Militares & Comandantes
+                Fonte de verdade: escalas_servico — Comandante de Guarnição sempre calculado pelo servidor
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 text-red-100 hover:text-white hover:bg-red-700/80 rounded-lg transition-colors cursor-pointer"
-          >
+          <button onClick={onClose} className="p-1.5 text-red-100 hover:text-white hover:bg-red-700/80 rounded-lg cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Tab Selection */}
-        <div className="flex items-center justify-between px-5 pt-3 bg-slate-100 border-b border-slate-200">
-          <div className="flex items-center gap-2">
+        {/* Tabs */}
+        <div className="flex items-center gap-2 px-5 pt-3 bg-slate-100 border-b border-slate-200 shrink-0">
+          {([
+            { key: 'ESCALA', label: 'Guarnições em Serviço', icon: Layers },
+            { key: 'IMPORTAR', label: 'Importar / Colar e-193', icon: FileText },
+            { key: 'HISTORICO', label: 'Histórico / Auditoria', icon: History },
+          ] as { key: TabKey; label: string; icon: any }[]).map(t => (
             <button
+              key={t.key}
               type="button"
-              onClick={() => setActiveTab('VIEW_ROSTER')}
+              onClick={() => setActiveTab(t.key)}
               className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'VIEW_ROSTER'
+                activeTab === t.key
                   ? 'bg-white text-red-800 border-t-2 border-t-red-700 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
               }`}
             >
-              <Layers className="w-3.5 h-3.5" />
-              <span>Guarnições e Efetivo ({activeSquadsList.length} VTRs)</span>
+              <t.icon className="w-3.5 h-3.5" />
+              <span>{t.label}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('PASTE')}
-              className={`px-4 py-2 text-xs font-bold rounded-t-lg transition-colors flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'PASTE'
-                  ? 'bg-white text-red-800 border-t-2 border-t-red-700 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Importar / Colar Escala e-193</span>
-            </button>
-          </div>
-
-          {activeTab === 'VIEW_ROSTER' && (
-            <button
-              type="button"
-              onClick={() => setIsAddingSquad(true)}
-              className="mb-1 px-3 py-1.5 bg-red-800 hover:bg-red-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>+ Nova Viatura (VTR)</span>
-            </button>
-          )}
+          ))}
         </div>
 
-        {/* Feedback Messages */}
+        {/* Feedback */}
         {successMsg && (
-          <div className="mx-5 mt-3 p-3 bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs rounded-lg flex items-center justify-between shadow-sm">
+          <div className="mx-5 mt-3 p-3 bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs rounded-lg flex items-center justify-between shadow-sm shrink-0">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span className="font-semibold">{successMsg}</span>
+              <span className="font-semibold whitespace-pre-line">{successMsg}</span>
             </div>
             <button onClick={() => setSuccessMsg('')} className="text-emerald-700 hover:text-emerald-900 text-xs font-bold cursor-pointer">✕</button>
           </div>
         )}
         {errorMsg && (
-          <div className="mx-5 mt-3 p-3.5 bg-red-50 border-2 border-red-400 text-red-900 text-xs rounded-lg flex items-start justify-between gap-3 shadow-sm">
+          <div className="mx-5 mt-3 p-3.5 bg-red-50 border-2 border-red-400 text-red-900 text-xs rounded-lg flex items-start justify-between gap-3 shadow-sm shrink-0">
             <div className="flex items-start gap-2.5">
               <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
               <div>
-                <div className="font-bold text-red-950">Falha ao processar operação:</div>
+                <div className="font-bold text-red-950">Falha:</div>
                 <div className="font-medium text-red-900 mt-0.5 whitespace-pre-line leading-relaxed">{errorMsg}</div>
               </div>
             </div>
-            <button 
-              onClick={() => setErrorMsg('')} 
-              className="text-red-700 hover:text-red-900 text-sm font-black p-1 hover:bg-red-100 rounded transition-colors cursor-pointer shrink-0"
-              title="Fechar aviso de erro"
-            >
-              ✕
-            </button>
+            <button onClick={() => setErrorMsg('')} className="text-red-700 hover:text-red-900 text-xs font-bold cursor-pointer shrink-0">✕</button>
           </div>
         )}
 
-        {/* Modal Content */}
-        <div className="flex-1 overflow-y-auto p-5 bg-slate-50">
-          
-          {activeTab === 'PASTE' ? (
-            <div className="space-y-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-950 flex items-start gap-3">
-                <Sparkles className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-bold text-amber-900">Como funciona o Importador e-193:</div>
-                  <p className="mt-0.5 text-amber-800">
-                    Basta copiar o texto da escala diária de viaturas gerada no sistema e-193. O algoritmo identifica automaticamente a hierarquia: <strong>Pelotão (PelBM) ➔ Viatura (VTR) ➔ Militares com Matrícula, Posto/Nome, Função e Turno</strong>.
-                  </p>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5">
+
+          {/* ---------------- TAB: ESCALA ATIVA ---------------- */}
+          {activeTab === 'ESCALA' && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs text-slate-500">
+                  Mostrando quem está de serviço <strong>agora</strong>, direto de <code className="bg-slate-100 px-1 rounded">v_guarnicao_em_servico</code>.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setManualEditTarget({ squadId: null, callSign: '', platoonId: platoons[0]?.id || '' })}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Incluir Posto Avulso
+                  </button>
+                  <button
+                    type="button"
+                    onClick={loadEscala}
+                    className="p-1.5 text-slate-500 hover:text-slate-800 rounded-lg cursor-pointer"
+                    title="Atualizar"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingEscala ? 'animate-spin' : ''}`} />
+                  </button>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-bold text-xs mb-1.5">
-                  Cole os dados brutos da escala e-193 aqui:
-                </label>
-                <textarea
-                  rows={13}
-                  value={rawText}
-                  onChange={(e) => setRawText(e.target.value)}
-                  placeholder="Cole aqui o texto do e-193..."
-                  className="w-full bg-white border border-slate-300 rounded-xl p-3 text-slate-900 font-mono text-xs focus:ring-2 focus:ring-red-600 focus:border-red-600 shadow-inner"
-                />
-              </div>
+              {loadingEscala && <p className="text-sm text-slate-500 py-6 text-center">Carregando escala...</p>}
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('VIEW_ROSTER')}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-200 rounded-lg cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  disabled={isProcessing}
-                  onClick={handleProcessImport}
-                  className={`px-5 py-2.5 rounded-lg text-xs font-extrabold text-white flex items-center gap-2 shadow-sm transition-all cursor-pointer ${
-                    isProcessing ? 'bg-red-950/70 cursor-not-allowed opacity-80' : 'bg-red-800 hover:bg-red-700'
-                  }`}
-                >
-                  {isProcessing ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Gravando no Supabase...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Processar Escala e-193</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-extrabold text-slate-900">
-                    Escala Ativa do Dia — 4º Batalhão de Bombeiro Militar (Santa Maria)
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    Viaturas e militares em serviço. Você pode ajustar militares, trocar comandantes ou realizar permutas extraordinárias.
-                  </p>
+              {!loadingEscala && guarnicoesPorSquad.size === 0 && (
+                <div className="text-center py-10 text-slate-500 text-sm">
+                  Nenhuma guarnição em serviço neste momento. Importe a escala do e-193 na aba ao lado.
                 </div>
-              </div>
+              )}
 
-              {/* Grid de Viaturas e Militares */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {activeSquadsList.map((squad) => {
-                  const plat = platoons.find(p => p.id === squad.platoonId);
+              <div className="space-y-4">
+                {Array.from(guarnicoesPorSquad.entries()).map(([squadId, rows]) => {
+                  const first = rows[0];
+                  const cgRow = rows.find(r => r.is_cg);
                   return (
-                    <div 
-                      key={squad.id}
-                      className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm space-y-3 hover:border-slate-300 transition-all flex flex-col justify-between"
-                    >
-                      <div>
-                        {/* Top Header da VTR */}
-                        <div className="flex items-start justify-between border-b border-slate-100 pb-2.5">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-10 h-10 rounded-lg bg-red-700 text-white flex items-center justify-center font-mono font-black text-xs shadow">
-                              {squad.callSign.slice(0, 3)}
-                            </div>
-                            <div>
-                              <div className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
-                                <span>{squad.callSign}</span>
-                                <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                  {squad.members?.length || squad.activeMembersCount} militar(es)
-                                </span>
-                              </div>
-                              <div className="text-[11px] font-semibold text-slate-600">
-                                {plat?.name || squad.unitText || 'Pelotão BM'}
-                              </div>
-                              {squad.unitText && (
-                                <div className="text-[10px] text-slate-400 font-mono">
-                                  {squad.unitText}
-                                </div>
-                              )}
-                            </div>
+                    <div key={squadId} className="border border-slate-300 rounded-lg overflow-hidden">
+                      <div className="bg-slate-100 px-4 py-2.5 flex items-center justify-between flex-wrap gap-2">
+                        <div>
+                          <div className="font-extrabold text-sm text-slate-800 flex items-center gap-2">
+                            <Truck className="w-4 h-4 text-red-700" /> {first.call_sign}
+                            <span className="text-[10px] font-bold text-slate-500">{first.platoon_name}</span>
                           </div>
-
-                          <div className="flex flex-col items-end gap-1">
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
-                              squad.status === 'EM_OCORRENCIA'
-                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                                : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                            }`}>
-                              {squad.status === 'EM_OCORRENCIA' ? 'EM ATENDIMENTO' : 'DISPONÍVEL'}
-                            </span>
-                            <button
-                              onClick={() => handleDeleteSquad(squad.id, squad.callSign)}
-                              className="text-slate-400 hover:text-red-600 p-1 text-[11px] transition-colors cursor-pointer"
-                              title="Remover viatura da escala"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Comandante da Guarnição */}
-                        <div className="mt-2.5 flex items-center justify-between bg-amber-50/70 p-2 rounded-lg border border-amber-200/80 text-xs">
-                          <div className="flex items-center gap-1.5 text-amber-950 font-medium">
-                            <Award className="w-4 h-4 text-amber-700 shrink-0" />
-                            <span>Comando da VTR:</span>
-                            <strong className="font-bold text-slate-900">Comandante de Guarnição</strong>
-                          </div>
-                          <span className="text-[10px] font-mono text-slate-500">{squad.currentShift}</span>
-                        </div>
-
-                        {/* Lista de Postos e Funções na Guarnição */}
-                        <div className="mt-3 space-y-1.5">
-                          <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                            <span className="flex items-center gap-1">
-                              <Users className="w-3 h-3 text-red-600" />
-                              Composição da Guarnição:
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenAddMember(squad.id)}
-                              className="text-red-700 hover:text-red-900 hover:underline flex items-center gap-0.5 lowercase text-[10px] font-bold cursor-pointer"
-                            >
-                              <Plus className="w-3 h-3" />
-                              Adicionar posto
-                            </button>
-                          </div>
-
-                          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                            {squad.members && squad.members.length > 0 ? (
-                              squad.members.map((m, idx) => {
-                                const isCmt = m.roleInSquad.toUpperCase().includes('COMANDANTE') || m.name === squad.commanderName;
-                                return (
-                                  <div 
-                                    key={idx} 
-                                    className="flex items-center justify-between bg-slate-50 hover:bg-slate-100 p-2 rounded-lg border border-slate-200 text-xs transition-colors"
-                                  >
-                                    <div>
-                                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                                        <span>{m.roleInSquad}</span>
-                                        {isCmt && (
-                                          <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-bold">
-                                            Cmt
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="text-[10px] text-slate-500 font-mono">
-                                        Posto Operacional • Cód: {m.registrationNumber}
-                                      </div>
-                                    </div>
-
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white text-slate-700 border border-slate-200">
-                                        {m.shiftHours}h
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenEditMember(squad.id, m, squad.commanderName)}
-                                        className="p-1 text-slate-500 hover:text-blue-700 rounded transition-colors cursor-pointer"
-                                        title="Editar posto ou transferir de viatura"
-                                      >
-                                        <Edit2 className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleDeleteMember(squad.id, m.registrationNumber, m.roleInSquad)}
-                                        className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-                                        title="Remover posto da viatura"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })
-                            ) : (
-                              <div className="py-3 text-center text-slate-400 text-xs italic bg-slate-50 rounded-lg border border-dashed border-slate-200">
-                                Nenhum posto vinculado a esta viatura.
-                              </div>
+                          <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1">
+                            <Award className="w-3 h-3" />
+                            CG: <strong>{cgRow ? `${cgRow.posto_graduacao} ${cgRow.nome_guerra}` : 'Não definido'}</strong>
+                            {cgRow?.cg_definido_explicitamente && (
+                              <span className="ml-1 px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[9px] font-bold">MANUAL</span>
                             )}
                           </div>
                         </div>
-                      </div>
-
-                      {/* Ações da Guarnição */}
-                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenAddMember(squad.id)}
-                          className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md flex items-center gap-1 cursor-pointer"
-                        >
-                          <Plus className="w-3 h-3 text-red-600" />
-                          <span>Incluir Posto / Função</span>
-                        </button>
-
-                        <div className="text-[10px] text-slate-500">
-                          {squad.members?.length || 0} posto(s) ativo(s)
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setCgEditSquadId(squadId)}
+                            className="px-2.5 py-1 bg-white border border-slate-300 hover:border-red-400 hover:text-red-700 rounded-md text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Pencil className="w-3 h-3" /> Alterar CG
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setManualEditTarget({ squadId, callSign: first.call_sign, platoonId: first.platoon_id })}
+                            className="px-2.5 py-1 bg-white border border-slate-300 hover:border-red-400 hover:text-red-700 rounded-md text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Pencil className="w-3 h-3" /> Editar Escala do Dia
+                          </button>
                         </div>
                       </div>
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-slate-500 border-b border-slate-200">
+                            <th className="text-left font-semibold px-4 py-1.5">Militar</th>
+                            <th className="text-left font-semibold px-4 py-1.5">Função</th>
+                            <th className="text-left font-semibold px-4 py-1.5">Turno</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(r => (
+                            <tr key={r.militar_id} className={`border-b border-slate-100 last:border-0 ${r.is_cg ? 'bg-amber-50/60' : ''}`}>
+                              <td className="px-4 py-1.5 font-semibold text-slate-700">
+                                {r.posto_graduacao} {r.nome_guerra}
+                                {r.is_cg && <Shield className="w-3 h-3 text-amber-600 inline ml-1.5" />}
+                              </td>
+                              <td className="px-4 py-1.5 text-slate-600">{r.funcao_na_guarnicao}</td>
+                              <td className="px-4 py-1.5 text-slate-500 flex items-center gap-1">
+                                <Clock className="w-3 h-3" /> {formatDateTime(r.inicio_turno)} — {formatDateTime(r.fim_turno)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   );
                 })}
@@ -694,260 +374,451 @@ export const SquadImportModal: React.FC<SquadImportModalProps> = ({
             </div>
           )}
 
-        </div>
-
-        {/* SUB-MODAL: ADICIONAR / EDITAR POSTO OPERACIONAL */}
-        {editingMember && (
-          <div className="fixed inset-0 z-[1600] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="relative w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-300 overflow-hidden">
-              <div className="px-4 py-3 bg-red-800 text-white flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ArrowRightLeft className="w-4 h-4" />
-                  <h4 className="font-extrabold text-sm">
-                    {editingMember.isNew ? 'Adicionar Posto na Escala' : 'Editar Posto / Transferência de VTR'}
-                  </h4>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEditingMember(null)}
-                  className="p-1 text-red-100 hover:text-white cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleSaveMember} className="p-4 space-y-3 text-xs bg-slate-50">
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Viatura (VTR) Destino *</label>
-                  <select
-                    value={editingMember.squadId}
-                    onChange={(e) => setEditingMember({ ...editingMember, squadId: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900 font-bold focus:ring-1 focus:ring-red-600"
-                  >
-                    {activeSquadsList.map(s => (
-                      <option key={s.id} value={s.id}>
-                        {s.callSign} — {s.unitText || s.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Função Operacional na Guarnição *</label>
-                  <select
-                    value={editingMember.roleInSquad}
-                    onChange={(e) => setEditingMember({ ...editingMember, roleInSquad: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900 font-semibold"
-                  >
-                    {COMMON_ROLES.map(role => (
-                      <option key={role} value={role}>{role}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-slate-700 font-bold mb-1">Militar *</label>
-                    <input
-                      list="militares-roster-datalist"
-                      type="text"
-                      value={
-                        editingMember.registrationNumber
-                          ? `${editingMember.rank} ${editingMember.warName} (${editingMember.registrationNumber})`
-                          : editingMember.warName
-                      }
-                      onChange={(e) => {
-                        const typed = e.target.value;
-                        // Tenta casar o texto digitado/selecionado com um militar real da lista
-                        const match = militaresRoster.find(
-                          m => `${m.posto} ${m.nome} (${m.matricula})` === typed || `${m.posto} ${m.nome}`.toLowerCase() === typed.toLowerCase()
-                        );
-                        if (match) {
-                          setEditingMember({
-                            ...editingMember,
-                            registrationNumber: match.matricula,
-                            rank: match.posto,
-                            warName: match.nome,
-                          });
-                        } else {
-                          // Ainda digitando, sem match exato — limpa a matrícula até escolher alguém real da lista
-                          setEditingMember({ ...editingMember, registrationNumber: '', rank: '', warName: typed });
-                        }
-                      }}
-                      placeholder={rosterLoading ? 'Carregando militares...' : 'Digite o nome de guerra do militar...'}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900 font-semibold"
-                      autoComplete="off"
-                    />
-                    <datalist id="militares-roster-datalist">
-                      {militaresRoster.map(m => (
-                        <option key={m.matricula} value={`${m.posto} ${m.nome} (${m.matricula})`} />
-                      ))}
-                    </datalist>
-                    {rosterError && (
-                      <p className="text-red-600 text-[11px] mt-1">{rosterError}</p>
-                    )}
-                    {!editingMember.registrationNumber && editingMember.warName && !rosterLoading && (
-                      <p className="text-amber-600 text-[11px] mt-1">
-                        Nenhum militar encontrado com esse nome. Selecione um nome da lista para vincular corretamente.
-                      </p>
-                    )}
-                    {editingMember.registrationNumber && (
-                      <p className="text-emerald-700 text-[11px] mt-1">
-                        Matrícula {editingMember.registrationNumber} selecionada.
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-slate-700 font-bold mb-1">Duração do Turno</label>
-                    <select
-                      value={editingMember.shiftHours}
-                      onChange={(e) => setEditingMember({ ...editingMember, shiftHours: parseInt(e.target.value, 10) })}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900"
-                    >
-                      <option value={24}>24 Horas</option>
-                      <option value={12}>12 Horas</option>
-                      <option value={8}>8 Horas</option>
-                      <option value={6}>6 Horas</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="pt-2">
-                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
-                    <input
-                      type="checkbox"
-                      checked={editingMember.isCommander}
-                      onChange={(e) => setEditingMember({ ...editingMember, isCommander: e.target.checked })}
-                      className="w-4 h-4 text-red-600 rounded"
-                    />
-                    <span>Comandante da VTR</span>
+          {/* ---------------- TAB: IMPORTAR E-193 ---------------- */}
+          {activeTab === 'IMPORTAR' && (
+            <div>
+              {!previewEntries && (
+                <>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                    Cole abaixo o texto exportado do e-193 (colunas separadas por TAB):
                   </label>
-                </div>
-
-                <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
+                  <textarea
+                    value={rawText}
+                    onChange={e => setRawText(e.target.value)}
+                    rows={14}
+                    placeholder={'Ex:\n4º BBM / 1ª CIA / 2º PEL BS / P. PINHEIRO MACHADO\nABT-1496\n3177360\t1º SGT SILVA\tCOMANDANTE DE GUARNIÇÃO\t24\t29/08/2026 08:00\t30/08/2026 08:00\n...'}
+                    className="w-full border border-slate-300 rounded-lg p-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-red-400"
+                  />
                   <button
                     type="button"
-                    onClick={() => setEditingMember(null)}
-                    className="px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-200 font-bold cursor-pointer"
+                    onClick={handleAnalyze}
+                    className="mt-3 px-4 py-2 bg-red-800 hover:bg-red-700 text-white rounded-lg text-sm font-bold flex items-center gap-2 cursor-pointer"
                   >
-                    Cancelar
+                    <FileText className="w-4 h-4" /> Analisar Texto
                   </button>
+                </>
+              )}
+
+              {previewEntries && (
+                <>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-bold text-slate-700">
+                      Pré-visualização: {previewEntries.length} registro(s) em {previewBySquad.size} viatura(s)
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewEntries(null)}
+                      className="text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                    >
+                      ← Colar outro texto
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+                    ⚠️ O Comandante de Guarnição destacado abaixo é uma <strong>estimativa</strong> para conferência.
+                    A definição final é sempre recalculada pelo servidor (função/antiguidade) no momento da gravação.
+                  </p>
+
+                  <div className="space-y-3">
+                    {Array.from(previewBySquad.entries()).map(([callSign, entries]) => {
+                      const estimatedCg = estimatedCgByCallSign.get(callSign);
+                      return (
+                        <div key={callSign} className="border border-slate-300 rounded-lg overflow-hidden">
+                          <div className="bg-slate-100 px-4 py-2 text-sm font-extrabold text-slate-800 flex items-center gap-2">
+                            <Truck className="w-4 h-4 text-red-700" /> {callSign}
+                            <span className="text-[10px] font-bold text-slate-500">{entries[0]?.platoon_name}</span>
+                          </div>
+                          <table className="w-full text-xs">
+                            <tbody>
+                              {entries.map((e, idx) => (
+                                <tr key={idx} className={`border-b border-slate-100 last:border-0 ${e.matricula === estimatedCg ? 'bg-amber-50/60' : ''}`}>
+                                  <td className="px-4 py-1.5 font-semibold text-slate-700">
+                                    {e.posto_graduacao} {e.nome_guerra}
+                                    {e.matricula === estimatedCg && <Shield className="w-3 h-3 text-amber-600 inline ml-1.5" />}
+                                  </td>
+                                  <td className="px-4 py-1.5 text-slate-600">{e.funcao_na_guarnicao}</td>
+                                  <td className="px-4 py-1.5 text-slate-500">{e.carga_horaria_horas}h</td>
+                                  <td className="px-4 py-1.5 text-slate-500">{formatDateTime(e.inicio_turno)} — {formatDateTime(e.fim_turno)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 mt-3">
+                    Ao confirmar, a escala de <strong>cada VTR listada acima, para o(s) dia(s) correspondente(s)</strong>, será substituída pelos registros acima.
+                  </p>
+
                   <button
-                    type="submit"
-                    disabled={!editingMember.registrationNumber}
-                    className="px-4 py-1.5 bg-red-800 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-bold shadow-sm cursor-pointer"
+                    type="button"
+                    disabled={isImporting}
+                    onClick={handleConfirmImport}
+                    className="mt-3 px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white rounded-lg text-sm font-bold flex items-center gap-2 cursor-pointer"
                   >
-                    Salvar Posto na Guarnição
+                    <CheckCircle2 className="w-4 h-4" /> {isImporting ? 'Gravando no Supabase...' : 'Confirmar Importação'}
                   </button>
-                </div>
-              </form>
+                </>
+              )}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* SUB-MODAL: ADICIONAR NOVA VIATURA */}
-        {isAddingSquad && (
-          <div className="fixed inset-0 z-[1600] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="relative w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-300 overflow-hidden">
-              <div className="px-4 py-3 bg-red-800 text-white flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Truck className="w-4 h-4" />
-                  <h4 className="font-extrabold text-sm">Cadastrar Nova Viatura no Plantão</h4>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingSquad(false)}
-                  className="p-1 text-red-100 hover:text-white cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleSaveNewSquad} className="p-4 space-y-3 text-xs bg-slate-50">
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Prefixo da Viatura (CallSign) *</label>
-                  <input
-                    type="text"
-                    value={newSquadCallSign}
-                    onChange={(e) => setNewSquadCallSign(e.target.value)}
-                    placeholder="Ex: ABT-1999, ABS-0520, AR-112"
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900 font-bold uppercase font-mono"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Pelotão de Bombeiro Militar (PelBM) *</label>
-                  <select
-                    value={newSquadPlatoonId}
-                    onChange={(e) => setNewSquadPlatoonId(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900 font-medium"
-                  >
-                    {platoons.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
+          {/* ---------------- TAB: HISTÓRICO ---------------- */}
+          {activeTab === 'HISTORICO' && (
+            <div>
+              {loadingAuditoria && <p className="text-sm text-slate-500 py-6 text-center">Carregando histórico...</p>}
+              {!loadingAuditoria && auditoria.length === 0 && (
+                <p className="text-sm text-slate-500 py-6 text-center">Nenhuma alteração registrada ainda.</p>
+              )}
+              {!loadingAuditoria && auditoria.length > 0 && (
+                <table className="w-full text-xs border border-slate-200 rounded-lg overflow-hidden">
+                  <thead className="bg-slate-100">
+                    <tr className="text-slate-500">
+                      <th className="text-left font-semibold px-3 py-2">Quando</th>
+                      <th className="text-left font-semibold px-3 py-2">Campo</th>
+                      <th className="text-left font-semibold px-3 py-2">De</th>
+                      <th className="text-left font-semibold px-3 py-2">Para</th>
+                      <th className="text-left font-semibold px-3 py-2">Origem</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditoria.map(a => (
+                      <tr key={a.id} className="border-t border-slate-100">
+                        <td className="px-3 py-1.5 text-slate-500">{formatDateTime(a.alterado_em)}</td>
+                        <td className="px-3 py-1.5 font-semibold text-slate-700">{a.campo}</td>
+                        <td className="px-3 py-1.5 text-slate-500">{a.valor_anterior || '—'}</td>
+                        <td className="px-3 py-1.5 text-slate-700 font-medium">{a.valor_novo || '—'}</td>
+                        <td className="px-3 py-1.5">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                            a.origem === 'EDICAO_MANUAL' ? 'bg-amber-100 text-amber-800' :
+                            a.origem === 'IMPORT_E193' ? 'bg-blue-100 text-blue-800' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>{a.origem}</span>
+                        </td>
+                      </tr>
                     ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Comandante Inicial da Guarnição</label>
-                  <input
-                    type="text"
-                    value={newSquadCommander}
-                    onChange={(e) => setNewSquadCommander(e.target.value)}
-                    placeholder="Ex: 1º SGT BRUM ou A Definir"
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 font-bold mb-1">Descrição do Turno</label>
-                  <input
-                    type="text"
-                    value={newSquadShift}
-                    onChange={(e) => setNewSquadShift(e.target.value)}
-                    placeholder="Ex: Turno 24h (08:00 às 08:00)"
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-slate-900"
-                  />
-                </div>
-
-                <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingSquad(false)}
-                    className="px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-200 font-bold cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-1.5 bg-red-800 hover:bg-red-700 text-white rounded-lg font-bold shadow-sm cursor-pointer"
-                  >
-                    Cadastrar Viatura
-                  </button>
-                </div>
-              </form>
+                  </tbody>
+                </table>
+              )}
             </div>
-          </div>
-        )}
-
-        {/* Modal Footer */}
-        <div className="px-5 py-3 bg-slate-100 border-t border-slate-200 flex items-center justify-between text-xs">
-          <div className="text-slate-500 flex items-center gap-1.5">
-            <Shield className="w-3.5 h-3.5 text-red-700" />
-            <span>Corpo de Bombeiros Militar do Rio Grande do Sul - 4º BBM Santa Maria</span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-lg transition-colors cursor-pointer"
-          >
-            Fechar
-          </button>
+          )}
         </div>
-
       </div>
+
+      {/* Submodal: alterar CG manualmente */}
+      {cgEditSquadId && (
+        <CgEditModal
+          squadId={cgEditSquadId}
+          rows={guarnicoesPorSquad.get(cgEditSquadId) || []}
+          onClose={() => setCgEditSquadId(null)}
+          onSaved={async () => {
+            setCgEditSquadId(null);
+            await loadEscala();
+          }}
+          onError={setErrorMsg}
+        />
+      )}
+
+      {/* Submodal: incluir/editar/remover posto na escala do dia */}
+      {manualEditTarget && (
+        <ManualEscalaEditModal
+          target={manualEditTarget}
+          platoons={platoons}
+          onClose={() => setManualEditTarget(null)}
+          onSaved={async () => {
+            setManualEditTarget(null);
+            await loadEscala();
+            onImportSuccess?.();
+          }}
+          onError={setErrorMsg}
+        />
+      )}
     </div>
   );
 };
+
+// ============================================================
+// Submodal: Alterar Comandante de Guarnição manualmente
+// ============================================================
+function CgEditModal({
+  squadId,
+  rows,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  squadId: string;
+  rows: GuarnicaoEmServicoRow[];
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [selectedMilitarId, setSelectedMilitarId] = useState(rows.find(r => r.is_cg)?.militar_id || '');
+  const [saving, setSaving] = useState(false);
+  const referenceEscalaId = rows[0]?.escala_id;
+
+  const handleSave = async () => {
+    if (!selectedMilitarId || !referenceEscalaId) return;
+    setSaving(true);
+    try {
+      await editarCgManualRpc(referenceEscalaId, selectedMilitarId);
+      onSaved();
+    } catch (err: any) {
+      onError(err?.message || 'Falha ao alterar o Comandante de Guarnição.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1600] bg-black/60 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="font-extrabold text-slate-800 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-amber-600" /> Alterar Comandante de Guarnição
+          </h4>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 cursor-pointer"><X className="w-4 h-4" /></button>
+        </div>
+        <p className="text-xs text-slate-500 mb-3">
+          Exclusivo para o perfil COBOM. Esta alteração fica registrada na auditoria como <strong>EDICAO_MANUAL</strong> e passa a valer para o restante do dia, até nova importação do e-193.
+        </p>
+        <div className="space-y-1.5 max-h-64 overflow-y-auto">
+          {rows.map(r => (
+            <label
+              key={r.militar_id}
+              className={`flex items-center gap-2.5 p-2.5 border rounded-lg cursor-pointer text-sm ${
+                selectedMilitarId === r.militar_id ? 'border-red-500 bg-red-50' : 'border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <input
+                type="radio"
+                checked={selectedMilitarId === r.militar_id}
+                onChange={() => setSelectedMilitarId(r.militar_id)}
+              />
+              <span className="font-semibold">{r.posto_graduacao} {r.nome_guerra}</span>
+              <span className="text-[11px] text-slate-500 ml-auto">{r.funcao_na_guarnicao}</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer">Cancelar</button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !selectedMilitarId}
+            className="px-4 py-1.5 text-xs font-bold text-white bg-red-800 hover:bg-red-700 disabled:opacity-60 rounded-lg cursor-pointer"
+          >
+            {saving ? 'Salvando...' : 'Confirmar Alteração'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Submodal: Incluir / editar / remover posto na escala do DIA
+// (lê a escala completa do dia antes de reenviar, para não apagar
+// os demais militares — fn_import_escala_e193 substitui a VTR/dia inteira)
+// ============================================================
+function ManualEscalaEditModal({
+  target,
+  platoons,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  target: { squadId: string | null; callSign: string; platoonId: string };
+  platoons: Platoon[];
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [callSign, setCallSign] = useState(target.callSign);
+  const [platoonId, setPlatoonId] = useState(target.platoonId);
+  const [dia] = useState(todayIso());
+  const [rows, setRows] = useState<EscalaDiaRow[]>([]);
+  const [loading, setLoading] = useState(!!target.squadId);
+  const [saving, setSaving] = useState(false);
+
+  const [novaMatricula, setNovaMatricula] = useState('');
+  const [novoPosto, setNovoPosto] = useState('SD');
+  const [novoNome, setNovoNome] = useState('');
+  const [novaFuncao, setNovaFuncao] = useState('COMBATENTE');
+  const [novaCarga, setNovaCarga] = useState(24);
+  const [novoInicio, setNovoInicio] = useState(`${dia}T08:00`);
+  const [novoFim, setNovoFim] = useState(`${dia}T08:00`);
+
+  useEffect(() => {
+    if (!target.squadId) return;
+    fetchEscalaCompletaDoDia(target.squadId, dia)
+      .then(setRows)
+      .catch(err => onError(err?.message || 'Falha ao carregar escala do dia.'))
+      .finally(() => setLoading(false));
+  }, [target.squadId]);
+
+  const platoon = platoons.find(p => p.id === platoonId);
+
+  const handleRemove = (escalaId: string) => {
+    if (rows.length <= 1) {
+      onError(
+        'Não é possível remover o último militar da VTR neste dia por aqui — isso deixaria a ' +
+        'guarnição sem nenhum registro de escala. Ajuste diretamente com o suporte técnico, ou ' +
+        'inclua um substituto antes de remover este.'
+      );
+      return;
+    }
+    setRows(rows.filter(r => r.escala_id !== escalaId));
+  };
+
+  const handleAddNew = () => {
+    if (!novaMatricula.trim() || !novoNome.trim()) {
+      onError('Informe ao menos matrícula e nome de guerra do militar a incluir.');
+      return;
+    }
+    setRows([...rows, {
+      escala_id: `novo-${Date.now()}`,
+      militar_id: '',
+      matricula: novaMatricula.trim(),
+      posto_graduacao: novoPosto,
+      nome_guerra: novoNome.trim().toUpperCase(),
+      funcao_na_guarnicao: novaFuncao,
+      carga_horaria_horas: novaCarga,
+      inicio_turno: `${novoInicio}:00-03:00`,
+      fim_turno: `${novoFim}:00-03:00`,
+      is_cg: false,
+    }]);
+    setNovaMatricula('');
+    setNovoNome('');
+  };
+
+  const handleSave = async () => {
+    if (!callSign.trim()) {
+      onError('Informe o prefixo da viatura (ex: ABT-1496).');
+      return;
+    }
+    if (rows.length === 0) {
+      onError('Inclua ao menos um militar antes de salvar.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const entries: E193ImportEntry[] = rows.map(r => ({
+        platoon_name: platoon?.name || '1º PEL',
+        platoon_bbm: platoon?.bbm || '4º BBM',
+        platoon_headquarters: platoon?.headquarters || 'Santa Maria',
+        call_sign: callSign.trim().toUpperCase(),
+        matricula: r.matricula,
+        posto_graduacao: r.posto_graduacao,
+        nome_guerra: r.nome_guerra,
+        funcao_na_guarnicao: r.funcao_na_guarnicao,
+        carga_horaria_horas: r.carga_horaria_horas,
+        inicio_turno: r.inicio_turno,
+        fim_turno: r.fim_turno,
+      }));
+      await importEscalaE193Rpc(entries);
+      onSaved();
+    } catch (err: any) {
+      onError(err?.message || 'Falha ao salvar a escala editada.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1600] bg-black/60 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-5 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="font-extrabold text-slate-800">Editar Escala do Dia — {dia}</h4>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 cursor-pointer"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div>
+            <label className="text-[11px] font-bold text-slate-500">Prefixo da VTR</label>
+            <input value={callSign} onChange={e => setCallSign(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm" placeholder="ABT-1496" />
+          </div>
+          <div>
+            <label className="text-[11px] font-bold text-slate-500">Pelotão</label>
+            <select value={platoonId} onChange={e => setPlatoonId(e.target.value)} className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm">
+              {platoons.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {loading && <p className="text-sm text-slate-500 py-4 text-center">Carregando escala atual do dia...</p>}
+
+        {!loading && (
+          <>
+            <table className="w-full text-xs mb-3">
+              <thead>
+                <tr className="text-slate-500 border-b">
+                  <th className="text-left py-1.5">Militar</th>
+                  <th className="text-left py-1.5">Função</th>
+                  <th className="text-left py-1.5">Turno</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.escala_id} className="border-b border-slate-100">
+                    <td className="py-1.5 font-semibold">{r.posto_graduacao} {r.nome_guerra}</td>
+                    <td className="py-1.5 text-slate-600">{r.funcao_na_guarnicao}</td>
+                    <td className="py-1.5 text-slate-500">{r.carga_horaria_horas}h</td>
+                    <td className="py-1.5 text-right">
+                      <button onClick={() => handleRemove(r.escala_id)} className="text-red-500 hover:text-red-700 cursor-pointer">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr><td colSpan={4} className="text-center text-slate-400 py-3">Nenhum militar nesta escala ainda.</td></tr>
+                )}
+              </tbody>
+            </table>
+
+            <div className="border border-dashed border-slate-300 rounded-lg p-3 space-y-2">
+              <p className="text-[11px] font-bold text-slate-600">Incluir novo posto</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input placeholder="Matrícula" value={novaMatricula} onChange={e => setNovaMatricula(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs" />
+                <select value={novoPosto} onChange={e => setNovoPosto(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs">
+                  {['SD', 'CB', '3º SGT', '2º SGT', '1º SGT', 'SUBTEN', '2º TEN', '1º TEN', 'CAP', 'MAJ'].map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <input placeholder="Nome de guerra" value={novoNome} onChange={e => setNovoNome(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs col-span-2" />
+                <input placeholder="Função (ex: COMANDANTE DE GUARNIÇÃO)" value={novaFuncao} onChange={e => setNovaFuncao(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs col-span-2" />
+                <select value={novaCarga} onChange={e => setNovaCarga(Number(e.target.value))} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs">
+                  {[6, 8, 12, 24].map(h => <option key={h} value={h}>{h}h</option>)}
+                </select>
+                <div />
+                <div>
+                  <label className="text-[10px] text-slate-500">Início do turno</label>
+                  <input type="datetime-local" value={novoInicio} onChange={e => setNovoInicio(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-full" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500">Fim do turno</label>
+                  <input type="datetime-local" value={novoFim} onChange={e => setNovoFim(e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs w-full" />
+                </div>
+              </div>
+              <button onClick={handleAddNew} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                <Plus className="w-3.5 h-3.5" /> Adicionar à lista
+              </button>
+            </div>
+          </>
+        )}
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer">Cancelar</button>
+          <button
+            onClick={handleSave}
+            disabled={saving || loading}
+            className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 rounded-lg cursor-pointer"
+          >
+            {saving ? 'Salvando...' : 'Salvar Escala do Dia'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -238,217 +238,6 @@ export async function deleteSquadFromSupabase(squadId: string): Promise<boolean>
 }
 
 /**
- * Vincula um militar à sua guarnição e pelotão atual no Supabase
- */
-export async function assignMilitarToSquad(
-  matricula: string,
-  squadId: string | null,
-  platoonId?: string | null,
-  funcao?: string,
-  isComandante?: boolean
-): Promise<boolean> {
-  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
-  const cleanMatricula = matricula.replace(/\D/g, '').trim();
-  if (!cleanMatricula) return false;
-
-  const updatePayload: any = {
-    squad_atual_id: squadId || null,
-  };
-  if (platoonId) updatePayload.platoon_atual_id = platoonId;
-  if (funcao) updatePayload.funcao_na_guarnicao = funcao;
-  if (typeof isComandante === 'boolean') updatePayload.is_comandante = isComandante;
-
-  const { error, data } = await supabase
-    .from('militares')
-    .update(updatePayload)
-    .eq('matricula', cleanMatricula)
-    .select('id');
-
-  if (error) {
-    // Antes: console.warn + return true (falha silenciosa). Agora: erro explícito.
-    throw new Error(`Falha ao vincular militar (matrícula ${cleanMatricula}) à guarnição: ${error.message}`);
-  }
-
-  if (!data || data.length === 0) {
-    // UPDATE rodou sem erro, mas nenhuma linha bateu — matrícula não existe no banco.
-    throw new Error(`Matrícula ${cleanMatricula} não encontrada em 'militares'. O militar precisa estar cadastrado antes de ser vinculado à guarnição.`);
-  }
-
-  return true;
-}
-
-/**
- * Registra a escala de serviço completa no Supabase na tabela 'escalas_servico'
- * e atualiza o estado atual das guarnições e militares com determinação precisa de CG.
- */
-export async function registerEscalaServico(
-  squads: Squad[],
-  platoons?: Platoon[]
-): Promise<{ squadsOk: number; membersOk: number; errors: string[] }> {
-  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
-
-  const errors: string[] = [];
-  let squadsOk = 0;
-  let membersOk = 0;
-
-  // Define horários padrão de plantão de 24h (hoje 08:00 até amanhã 08:00)
-  const now = new Date();
-  const defaultStart = new Date(now);
-  defaultStart.setHours(8, 0, 0, 0);
-  const defaultEnd = new Date(defaultStart);
-  defaultEnd.setDate(defaultEnd.getDate() + 1);
-
-  for (const squad of squads) {
-    let realSquad: Squad;
-    try {
-      realSquad = await upsertSquadToSupabase(squad);
-      squadsOk++;
-    } catch (err: any) {
-      errors.push(`Guarnição ${squad.callSign}: ${err?.message || 'erro desconhecido'}`);
-      continue; // sem guarnição real, não há como vincular os militares dela
-    }
-
-    if (!squad.members || squad.members.length === 0) {
-      continue;
-    }
-
-    // 1. Busca todos os militares da guarnição na tabela 'militares'
-    const matriculas = squad.members
-      .map(m => m.registrationNumber?.replace(/\D/g, '').trim())
-      .filter(Boolean);
-
-    if (matriculas.length === 0) continue;
-
-    const { data: militaresRows, error: milError } = await supabase
-      .from('militares')
-      .select('id, matricula, posto_graduacao, nome_guerra, is_comandante, squad_atual_id')
-      .in('matricula', matriculas);
-
-    if (milError) {
-      errors.push(`Guarnição ${squad.callSign}: Falha ao buscar militares: ${milError.message}`);
-      continue;
-    }
-
-    const milMap = new Map<string, any>();
-    (militaresRows || []).forEach(m => {
-      milMap.set(m.matricula, m);
-    });
-
-    // 2. Monta lista de candidatos para determinação de CG
-    const candidates: EscalaCandidate[] = [];
-    const memberDetails: { member: SquadMember; militarDb: any; inicioTurno: string; fimTurno: string; cargaHoraria: number }[] = [];
-
-    for (const member of squad.members) {
-      const cleanMat = member.registrationNumber?.replace(/\D/g, '').trim();
-      if (!cleanMat) continue;
-
-      const milDb = milMap.get(cleanMat);
-      if (!milDb) {
-        errors.push(`Militar ${member.registrationNumber} (${member.name}) na guarnição ${squad.callSign}: Não encontrado na tabela 'militares'.`);
-        continue;
-      }
-
-      const inicioTurno = member.shiftStart || defaultStart.toISOString();
-      const fimTurno = member.shiftEnd || defaultEnd.toISOString();
-      const cargaHoraria = member.shiftHours && [6, 8, 12, 24].includes(member.shiftHours) ? member.shiftHours : 24;
-
-      const isExplicitE193 = Boolean(
-        member.isExplicitE193Cg || 
-        member.roleInSquad?.toUpperCase().includes('COMANDANTE DE GUARNI') ||
-        member.roleInSquad?.toUpperCase().includes('COMANDANTE') ||
-        member.isCommander
-      );
-
-      candidates.push({
-        militarId: milDb.id,
-        matricula: milDb.matricula,
-        postoGraduacao: milDb.posto_graduacao || member.rank || 'SD',
-        nomeGuerra: milDb.nome_guerra || member.name,
-        funcao: member.roleInSquad || 'COMBATENTE',
-        isExplicitE193Cg: isExplicitE193,
-        inicioTurno,
-        fimTurno,
-      });
-
-      memberDetails.push({
-        member,
-        militarDb: milDb,
-        inicioTurno,
-        fimTurno,
-        cargaHoraria,
-      });
-    }
-
-    // 3. Aplica algoritmo de determinação de CG
-    const cgResults = determinarCgPorIntervalo(candidates);
-    let chosenCgName = '';
-
-    // 4. Grava em 'escalas_servico' e atualiza 'militares'
-    for (const detail of memberDetails) {
-      const { member, militarDb, inicioTurno, fimTurno, cargaHoraria } = detail;
-      const cgDecision = cgResults.get(militarDb.id) || {
-        isCg: false,
-        cgDefinidoExplicitamente: false,
-        motivo: 'INDEFINIDO' as const,
-      };
-
-      if (cgDecision.isCg) {
-        chosenCgName = `${militarDb.posto_graduacao} ${militarDb.nome_guerra}`;
-      }
-
-      try {
-        // Insere na tabela 'escalas_servico'
-        const escalaPayload = {
-          id: ensureUUID(),
-          militar_id: militarDb.id,
-          squad_id: realSquad.id,
-          platoon_id: realSquad.platoonId && realSquad.platoonId.length > 20 ? realSquad.platoonId : null,
-          funcao_na_guarnicao: member.roleInSquad || 'COMBATENTE',
-          carga_horaria_horas: cargaHoraria,
-          inicio_turno: inicioTurno,
-          fim_turno: fimTurno,
-          is_cg: cgDecision.isCg,
-          cg_definido_explicitamente: cgDecision.cgDefinidoExplicitamente,
-          created_at: new Date().toISOString(),
-        };
-
-        const { error: escalaError } = await supabase
-          .from('escalas_servico')
-          .insert(escalaPayload);
-
-        if (escalaError) {
-          // Se houver erro na inserção da escala, registra nos logs mas prossegue para atualizar estado do militar
-          console.warn(`Aviso ao inserir em escalas_servico para militar ${militarDb.matricula}:`, escalaError.message);
-        }
-
-        // Atualiza tabela 'militares' com vínculo e função
-        await assignMilitarToSquad(
-          militarDb.matricula,
-          realSquad.id,
-          realSquad.platoonId,
-          member.roleInSquad || 'COMBATENTE',
-          cgDecision.isCg
-        );
-
-        membersOk++;
-      } catch (err: any) {
-        errors.push(`Militar ${militarDb.matricula} (${member.name}) na guarnição ${squad.callSign}: ${err?.message || 'erro desconhecido'}`);
-      }
-    }
-
-    // 5. Atualiza comandante da viatura na tabela squads se identificado
-    if (chosenCgName) {
-      await supabase
-        .from('squads')
-        .update({ commander_name: chosenCgName, active_members_count: memberDetails.length })
-        .eq('id', realSquad.id);
-    }
-  }
-
-  return { squadsOk, membersOk, errors };
-}
-
-/**
  * Busca o Comandante de Guarnição (CG) ativo para uma guarnição em um dado instante temporal.
  * Fonte primária: 'escalas_servico'
  * Fallback: 'militares' vinculado à guarnição
@@ -1260,6 +1049,60 @@ export async function fetchGuarnicoesEmServico(): Promise<GuarnicaoEmServicoRow[
     is_cg: Boolean(r.is_cg),
     cg_definido_explicitamente: Boolean(r.cg_definido_explicitamente),
   }));
+}
+
+/**
+ * Busca TODOS os registros de escala de uma VTR num dia específico (não só os
+ * vigentes agora). Necessário antes de qualquer edição manual de um único
+ * posto, porque fn_import_escala_e193 SUBSTITUI a escala inteira daquela
+ * VTR/dia — se enviarmos só o registro alterado, perdemos os demais.
+ */
+export interface EscalaDiaRow {
+  escala_id: string;
+  militar_id: string;
+  matricula: string;
+  posto_graduacao: string;
+  nome_guerra: string;
+  funcao_na_guarnicao: string;
+  carga_horaria_horas: number;
+  inicio_turno: string;
+  fim_turno: string;
+  is_cg: boolean;
+}
+
+export async function fetchEscalaCompletaDoDia(squadId: string, dia: string): Promise<EscalaDiaRow[]> {
+  if (!isSupabaseConfigured() || !squadId) return [];
+
+  const inicioDia = `${dia}T00:00:00-03:00`;
+  const fimDia = `${dia}T23:59:59-03:00`;
+
+  const { data, error } = await supabase
+    .from('escalas_servico')
+    .select('id, militar_id, funcao_na_guarnicao, carga_horaria_horas, inicio_turno, fim_turno, is_cg, militares(matricula, posto_graduacao, nome_guerra)')
+    .eq('squad_id', squadId)
+    .gte('inicio_turno', inicioDia)
+    .lte('inicio_turno', fimDia)
+    .order('inicio_turno', { ascending: true });
+
+  if (error) {
+    throw new Error(`Erro ao buscar escala do dia para a VTR: ${error.message}`);
+  }
+
+  return (data || []).map((r: any) => {
+    const m = r.militares || {};
+    return {
+      escala_id: r.id,
+      militar_id: r.militar_id,
+      matricula: m.matricula,
+      posto_graduacao: m.posto_graduacao,
+      nome_guerra: m.nome_guerra,
+      funcao_na_guarnicao: r.funcao_na_guarnicao,
+      carga_horaria_horas: r.carga_horaria_horas,
+      inicio_turno: r.inicio_turno,
+      fim_turno: r.fim_turno,
+      is_cg: Boolean(r.is_cg),
+    };
+  });
 }
 
 /**
