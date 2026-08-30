@@ -374,7 +374,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
           assignedSquadId,
           status: 'PENDENTE',
           initialPhotos: photos,
-        });
+        }, currentUser.id);
         onSaved(created);
       }
     } catch (err: any) {
