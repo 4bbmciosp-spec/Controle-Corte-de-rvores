@@ -10,6 +10,19 @@ interface MapViewProps {
   onSelectOccurrence: (occ: Occurrence) => void;
 }
 
+// Previne XSS armazenado: qualquer texto vindo do banco (digitado por um usuário,
+// ex: endereço, descrição, nome do CG) precisa ser escapado antes de ir para
+// innerHTML. Nunca interpolar esses campos direto no template do popup.
+function escapeHtml(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export const MapView: React.FC<MapViewProps> = ({
   occurrences,
   squads = [],
@@ -98,15 +111,15 @@ export const MapView: React.FC<MapViewProps> = ({
         popupContent.className = 'p-1 text-slate-900 font-sans';
         popupContent.innerHTML = `
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px;">
-            <span style="font-weight: 800; font-size: 13px; color: #991b1b; font-family: monospace;">${occ.protocol}</span>
-            <span style="font-size: 10px; background: #fee2e2; color: #991b1b; padding: 1px 6px; border-radius: 4px; font-weight: bold;">${occ.urgency}</span>
+            <span style="font-weight: 800; font-size: 13px; color: #991b1b; font-family: monospace;">${escapeHtml(occ.protocol)}</span>
+            <span style="font-size: 10px; background: #fee2e2; color: #991b1b; padding: 1px 6px; border-radius: 4px; font-weight: bold;">${escapeHtml(occ.urgency)}</span>
           </div>
-          <div style="font-weight: 700; font-size: 12px; color: #0f172a; margin-bottom: 3px;">${occ.dispatchNature || occ.type}</div>
-          <div style="font-size: 11px; margin-bottom: 4px; color: #475569;">📍 ${occ.address} - ${occ.neighborhood}, ${occ.city}</div>
-          ${assignedSquad ? `<div style="font-size: 11px; margin-bottom: 6px; color: #1e293b; font-weight: 600;">🚒 ${assignedSquad.callSign} (${assignedSquad.commanderName})</div>` : ''}
-          <div style="font-size: 11px; margin-bottom: 8px; line-height: 1.3; color: #334155;">${occ.description}</div>
+          <div style="font-weight: 700; font-size: 12px; color: #0f172a; margin-bottom: 3px;">${escapeHtml(occ.dispatchNature || occ.type)}</div>
+          <div style="font-size: 11px; margin-bottom: 4px; color: #475569;">📍 ${escapeHtml(occ.address)} - ${escapeHtml(occ.neighborhood)}, ${escapeHtml(occ.city)}</div>
+          ${assignedSquad ? `<div style="font-size: 11px; margin-bottom: 6px; color: #1e293b; font-weight: 600;">🚒 ${escapeHtml(assignedSquad.callSign)} (${escapeHtml(assignedSquad.commanderName)})</div>` : ''}
+          <div style="font-size: 11px; margin-bottom: 8px; line-height: 1.3; color: #334155;">${escapeHtml(occ.description)}</div>
           <div style="display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap;">
-            <span style="font-size: 10px; background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: bold;">Status: ${occ.status}</span>
+            <span style="font-size: 10px; background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: bold;">Status: ${escapeHtml(occ.status)}</span>
             ${occ.isCarriedOver ? `<span style="font-size: 10px; background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-weight: bold;">Turno Anterior (${hoursPending}h)</span>` : ''}
           </div>
           <button id="btn-popup-${occ.id}" style="
