@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Occurrence, Squad, User, OccurrencePhoto, Platoon } from '../types';
-import { getHoursPending, setSquadInAttendance, updateAttendanceTextInSupabase } from '../services/storageService';
+import { getHoursPending, setSquadInAttendance, recordAttendance } from '../services/storageService';
 import { PhotoViewerModal } from './PhotoViewerModal';
 import { 
   X, 
@@ -55,11 +55,11 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   onDeleteOccurrence,
 }) => {
   const [selectedPhoto, setSelectedPhoto] = useState<OccurrencePhoto | null>(null);
-  const [editingAttendanceId, setEditingAttendanceId] = useState<string | null>(null);
-  const [editActionTaken, setEditActionTaken] = useState('');
-  const [editUnresolvedDetails, setEditUnresolvedDetails] = useState('');
-  const [editSaving, setEditSaving] = useState(false);
-  const [editError, setEditError] = useState('');
+  const [complementingAttendanceId, setComplementingAttendanceId] = useState<string | null>(null);
+  const [complementoTexto, setComplementoTexto] = useState('');
+  const [complementoNumeroE193, setComplementoNumeroE193] = useState('');
+  const [complementoSaving, setComplementoSaving] = useState(false);
+  const [complementoError, setComplementoError] = useState('');
 
   const hoursPending = getHoursPending(occurrence);
   const assignedSquad = squads.find(s => s.id === occurrence.assignedSquadId);
@@ -72,56 +72,64 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   const isAssignedToCurrentSquad = currentUser.squadId === occurrence.assignedSquadId;
   const isPendingOverdue = occurrence.status === 'PENDENTE' && (hoursPending >= 12 || occurrence.isCarriedOver);
 
-  const handleOpenEditAttendance = (att: Occurrence['attendances'][number]) => {
-    setEditingAttendanceId(att.id);
-    setEditActionTaken(att.actionTaken || '');
-    setEditUnresolvedDetails(att.unresolvedDetails || '');
-    setEditError('');
+  // Quem gerou o histórico (preenchido_por) pode complementá-lo depois, além do COBOM.
+  // NUNCA sobrescreve o registro original — apenas anexa um novo histórico complementar.
+  const canComplementAttendance = (att: Occurrence['attendances'][number]) =>
+    isCobom || (!!att.preenchidoPorId && att.preenchidoPorId === currentUser.id);
+
+  const handleOpenComplemento = (att: Occurrence['attendances'][number]) => {
+    setComplementingAttendanceId(att.id);
+    setComplementoTexto('');
+    setComplementoNumeroE193('');
+    setComplementoError('');
   };
 
-  const handleCancelEditAttendance = () => {
-    setEditingAttendanceId(null);
-    setEditError('');
+  const handleCancelComplemento = () => {
+    setComplementingAttendanceId(null);
+    setComplementoError('');
   };
 
-  const handleSaveEditAttendance = async (att: Occurrence['attendances'][number]) => {
-    if (!editActionTaken.trim()) {
-      setEditError('O histórico não pode ficar vazio.');
+  const handleSaveComplemento = async (att: Occurrence['attendances'][number]) => {
+    if (!complementoNumeroE193.trim()) {
+      setComplementoError('Informe o número da OC no e-193 correspondente a este complemento.');
       return;
     }
-    setEditSaving(true);
-    setEditError('');
+    if (!complementoTexto.trim()) {
+      setComplementoError('O histórico complementar não pode ficar vazio.');
+      return;
+    }
+    setComplementoSaving(true);
+    setComplementoError('');
     try {
-      await updateAttendanceTextInSupabase(
-        att.id,
-        {
-          actionTaken: editActionTaken.trim(),
-          unresolvedDetails: att.statusResult === 'PENDENTE' ? editUnresolvedDetails.trim() || null : undefined,
-        },
-        currentUser.id
-      );
-
       const nowIso = new Date().toISOString();
-      const updatedOccurrence: Occurrence = {
-        ...occurrence,
-        attendances: occurrence.attendances.map(a =>
-          a.id === att.id
-            ? {
-                ...a,
-                actionTaken: editActionTaken.trim(),
-                unresolvedDetails: att.statusResult === 'PENDENTE' ? editUnresolvedDetails.trim() || undefined : a.unresolvedDetails,
-                editedAt: nowIso,
-                editedByName: `${currentUser.rank} ${currentUser.name}`,
-              }
-            : a
-        ),
-      };
-      onUpdateOccurrence(updatedOccurrence);
-      setEditingAttendanceId(null);
+      const updated = await recordAttendance(
+        occurrence.id,
+        {
+          // Dados de origem preservados — NÃO editáveis: mesma guarnição/VTR do histórico original
+          squadId: att.squadId,
+          squadName: att.squadName,
+          callSign: att.callSign,
+          commanderName: att.commanderName,
+          numeroE193: complementoNumeroE193.trim(),
+          complementaAtendimentoId: att.id,
+          shiftInfo: att.shiftInfo,
+          startedAt: att.finishedAt || nowIso,
+          finishedAt: nowIso,
+          statusResult: att.statusResult,
+          actionTaken: complementoTexto.trim(),
+          unresolvedReason: att.statusResult === 'PENDENTE' ? att.unresolvedReason : undefined,
+          unresolvedDetails: att.statusResult === 'PENDENTE' ? att.unresolvedDetails : undefined,
+          equipmentUsed: att.equipmentUsed || [],
+          photos: [],
+        },
+        currentUser
+      );
+      onUpdateOccurrence(updated);
+      setComplementingAttendanceId(null);
     } catch (err: any) {
-      setEditError(err?.message || 'Falha ao salvar a edição.');
+      setComplementoError(err?.message || 'Falha ao salvar o histórico complementar.');
     } finally {
-      setEditSaving(false);
+      setComplementoSaving(false);
     }
   };
 
@@ -561,9 +569,17 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                               <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
                                 <span>{att.squadName}</span>
                                 <span className="font-mono text-xs text-red-700">({att.callSign})</span>
+                                {att.complementaAtendimentoId && (
+                                  <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-300 text-[10px] font-bold">
+                                    COMPLEMENTO
+                                  </span>
+                                )}
                               </div>
                               <div className="text-[11px] text-slate-500 mt-0.5">
                                 Comandante: <strong className="text-slate-800">{att.commanderName}</strong> • {att.shiftInfo}
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5">
+                                OC e-193: <strong className="font-mono text-slate-800">{att.numeroE193 || 'Não informado'}</strong>
                               </div>
                             </div>
 
@@ -578,12 +594,12 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                               }`}>
                                 {isConcluded ? '✅ Concluída' : '⚠️ Não Concluída (Pendente)'}
                               </span>
-                              {isCobom && editingAttendanceId !== att.id && (
+                              {canComplementAttendance(att) && complementingAttendanceId !== att.id && (
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEditAttendance(att)}
+                                  onClick={() => handleOpenComplemento(att)}
                                   className="p-1 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded cursor-pointer print:hidden"
-                                  title="Editar este registro"
+                                  title="Adicionar histórico complementar (não altera o registro original)"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
                                 </button>
@@ -592,65 +608,64 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                           </div>
 
                           {/* Histórico conforme E-193 */}
-                          {editingAttendanceId === att.id ? (
-                            <div className="space-y-2">
-                              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-                                Editar Histórico conforme E-193:
+                          <div>
+                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                              Histórico conforme E-193:
+                            </span>
+                            <p className="text-slate-800 text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200 leading-relaxed whitespace-pre-line">
+                              {att.actionTaken}
+                            </p>
+                          </div>
+
+                          {complementingAttendanceId === att.id && (
+                            <div className="space-y-2 border-t border-slate-100 pt-3">
+                              <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">
+                                Adicionar Histórico Complementar (o registro original acima não será alterado):
                               </span>
-                              <textarea
-                                value={editActionTaken}
-                                onChange={(e) => setEditActionTaken(e.target.value)}
-                                rows={5}
-                                className="w-full text-xs bg-white p-2.5 rounded-lg border border-red-300 focus:ring-1 focus:ring-red-500 focus:border-red-500 leading-relaxed"
-                              />
-                              {!isConcluded && (
-                                <div>
-                                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                                    Detalhes da Pendência:
-                                  </span>
-                                  <textarea
-                                    value={editUnresolvedDetails}
-                                    onChange={(e) => setEditUnresolvedDetails(e.target.value)}
-                                    rows={2}
-                                    className="w-full text-xs bg-white p-2.5 rounded-lg border border-red-300 focus:ring-1 focus:ring-red-500 focus:border-red-500 leading-relaxed"
-                                  />
-                                </div>
-                              )}
-                              {editError && (
-                                <p className="text-[11px] text-red-700 font-semibold">{editError}</p>
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                                  Número da OC no e-193 deste complemento *
+                                </label>
+                                <input
+                                  type="text"
+                                  value={complementoNumeroE193}
+                                  onChange={(e) => setComplementoNumeroE193(e.target.value)}
+                                  placeholder="Ex: 193-2026-04521"
+                                  className="w-full text-xs font-mono bg-white p-2 rounded-lg border border-blue-300 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                                  Texto do complemento *
+                                </label>
+                                <textarea
+                                  value={complementoTexto}
+                                  onChange={(e) => setComplementoTexto(e.target.value)}
+                                  rows={4}
+                                  placeholder="Descreva a informação complementar a este histórico..."
+                                  className="w-full text-xs bg-white p-2.5 rounded-lg border border-blue-300 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 leading-relaxed"
+                                />
+                              </div>
+                              {complementoError && (
+                                <p className="text-[11px] text-red-700 font-semibold">{complementoError}</p>
                               )}
                               <div className="flex items-center gap-2">
                                 <button
                                   type="button"
-                                  disabled={editSaving}
-                                  onClick={() => handleSaveEditAttendance(att)}
-                                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white rounded-lg text-[11px] font-bold cursor-pointer"
+                                  disabled={complementoSaving}
+                                  onClick={() => handleSaveComplemento(att)}
+                                  className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:opacity-60 text-white rounded-lg text-[11px] font-bold cursor-pointer"
                                 >
-                                  {editSaving ? 'Salvando...' : 'Salvar Correção'}
+                                  {complementoSaving ? 'Salvando...' : 'Salvar Complemento'}
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={handleCancelEditAttendance}
+                                  onClick={handleCancelComplemento}
                                   className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[11px] font-bold cursor-pointer"
                                 >
                                   Cancelar
                                 </button>
                               </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                                Histórico conforme E-193:
-                              </span>
-                              <p className="text-slate-800 text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200 leading-relaxed whitespace-pre-line">
-                                {att.actionTaken}
-                              </p>
-                              {att.editedAt && (
-                                <p className="text-[10px] text-amber-700 mt-1 flex items-center gap-1">
-                                  <Edit3 className="w-3 h-3" />
-                                  Editado em {new Date(att.editedAt).toLocaleString('pt-BR')}{att.editedByName ? ` por ${att.editedByName}` : ''}
-                                </p>
-                              )}
                             </div>
                           )}
 
