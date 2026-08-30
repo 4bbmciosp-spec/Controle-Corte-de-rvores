@@ -47,7 +47,7 @@ const toWhatsAppLink = (phone: string, occ: Occurrence): string => {
   const digits = (phone || '').replace(/\D/g, '');
   // wa.me exige código do país. Números locais no BR vêm com DDD (10-11 dígitos) mas sem o "55" do país.
   const fullNumber = digits.length <= 11 ? `55${digits}` : digits;
-  const message = `Olá, ${occ.solicitorName}! Aqui é da Central de Emergências CBMRS (193) sobre a ocorrência ${occ.protocol} (${occ.address}).`;
+  const message = `Olá, ${occ.solicitorName}! Aqui é do COBOM CBMRS (193) sobre a ocorrência na ${occ.address}.`;
   return `https://wa.me/${fullNumber}?text=${encodeURIComponent(message)}`;
 };
 
