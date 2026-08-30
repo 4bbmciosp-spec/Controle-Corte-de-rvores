@@ -139,16 +139,26 @@ export default function App() {
       setOccurrences(fetchedOccs);
       setNotifications(fetchedNotifs);
 
-      // Derive currentUser from authenticated militar and real Supabase structure
-      const activeSquad = fetchedSquads.find(
-        s => s.id === authenticatedMilitar.squad_atual_id || s.id === authenticatedMilitar.guarnicao_id
-      );
+      // Derive currentUser from authenticated militar and real Supabase structure.
+      // PRIORIDADE: a escala real (fetchedSquads[].members agora vem de
+      // v_guarnicao_em_servico) — ou seja, "em qual VTR este militar está
+      // escalado AGORA". Só cai para squad_atual_id (campo legado/estático)
+      // se o militar não tiver nenhum registro de escala vigente no momento
+      // (ex: fora de serviço, ou escala ainda não importada).
+      const activeSquad =
+        fetchedSquads.find(s => s.members?.some(m => m.id === authenticatedMilitar.id)) ||
+        fetchedSquads.find(
+          s => s.id === authenticatedMilitar.squad_atual_id || s.id === authenticatedMilitar.guarnicao_id
+        );
       const activePlatoon = fetchedPlatoons.find(
         p => p.id === authenticatedMilitar.platoon_atual_id || p.id === authenticatedMilitar.pelotao_id
       );
 
       const matchedUser: User = {
-        id: `user-${authenticatedMilitar.matricula}`,
+        // CRÍTICO: preservar o UUID real de militares.id (não fabricar um ID sintético).
+        // Vários campos do banco (preenchido_por_id, militar_responsavel_id, aberta_por,
+        // militares_auditoria.alterado_por via auth.uid()) dependem deste UUID ser real.
+        id: authenticatedMilitar.id,
         name: authenticatedMilitar.nome_guerra,
         rank: authenticatedMilitar.posto_graduacao,
         role: authenticatedMilitar.perfil,
@@ -165,7 +175,10 @@ export default function App() {
         sq.members?.forEach(m => {
           if (!synUsers.some(u => u.registrationNumber === m.registrationNumber)) {
             synUsers.push({
-              id: `user-${m.registrationNumber}`,
+              // Usa o UUID real do militar quando disponível (vindo do banco).
+              // O prefixo sintético só é um último recurso e não deve ser usado
+              // para gravar em campos de FK (preenchido_por_id, militar_responsavel_id etc.).
+              id: m.id || `user-${m.registrationNumber}`,
               name: m.name,
               rank: m.rank,
               role: 'GUARNICAO',

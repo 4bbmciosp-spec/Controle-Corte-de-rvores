@@ -65,12 +65,21 @@ export async function fetchPlatoonsFromSupabase(): Promise<Platoon[]> {
 /**
  * Busca todas as Guarnições (squads) cadastradas no Supabase
  */
+function formatTurnoRange(inicioIso?: string, fimIso?: string): string {
+  if (!inicioIso || !fimIso) return 'Sem escala vigente';
+  const fmt = (iso: string) => new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+  return `${fmt(inicioIso)} às ${fmt(fimIso)}`;
+}
+
 export async function fetchSquadsFromSupabase(): Promise<Squad[]> {
   if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
 
+  // 1. Metadados ESTÁTICOS da VTR (id, nome, prefixo, pelotão). Isso não muda por turno.
   const { data, error } = await supabase
     .from('squads')
-    .select('id, name, call_sign, unit_text, platoon_id, commander_name, current_shift, status, active_members_count, created_at')
+    .select('id, name, call_sign, unit_text, platoon_id, status, created_at')
     .order('call_sign', { ascending: true });
 
   if (error) {
@@ -79,44 +88,50 @@ export async function fetchSquadsFromSupabase(): Promise<Squad[]> {
 
   if (!data) return [];
 
-  // Busca todos os militares que estão vinculados a alguma guarnição no momento,
-  // para montar a composição (members[]) de cada VTR.
-  const { data: militaresData, error: militaresError } = await supabase
-    .from('militares')
-    .select('id, matricula, posto_graduacao, nome_guerra, funcao_na_guarnicao, is_comandante, squad_atual_id')
-    .not('squad_atual_id', 'is', null);
+  // 2. Composição REAL (quem está de serviço agora, quem é o CG, qual o turno)
+  //    vem da view v_guarnicao_em_servico, que lê de escalas_servico — a
+  //    fonte de verdade da escala operacional. NÃO usar militares.squad_atual_id
+  //    ou militares.is_comandante aqui: são campos legados/estáticos que não
+  //    refletem trocas de turno.
+  const guarnicoesEmServico = await fetchGuarnicoesEmServico().catch(err => {
+    console.warn('Aviso ao buscar escala ativa (v_guarnicao_em_servico):', err?.message || err);
+    return [] as GuarnicaoEmServicoRow[];
+  });
 
-  if (militaresError) {
-    // Não derruba a tela de guarnições por causa disso — só loga o aviso.
-    // As VTRs continuam aparecendo, apenas sem a composição de efetivo.
-    console.warn('Aviso ao buscar militares vinculados às guarnições:', militaresError.message);
-  }
-
-  const membersBySquadId = new Map<string, SquadMember[]>();
-  (militaresData || []).forEach(m => {
-    if (!m.squad_atual_id) return;
-    const list = membersBySquadId.get(m.squad_atual_id) || [];
-    list.push({
-      id: m.id,
-      registrationNumber: m.matricula,
-      name: `${m.posto_graduacao} ${m.nome_guerra}`,
-      rank: m.posto_graduacao,
-      roleInSquad: m.funcao_na_guarnicao || 'COMBATENTE',
-      isCommander: Boolean(m.is_comandante),
-    });
-    membersBySquadId.set(m.squad_atual_id, list);
+  const bySquadId = new Map<string, GuarnicaoEmServicoRow[]>();
+  guarnicoesEmServico.forEach(row => {
+    const list = bySquadId.get(row.squad_id) || [];
+    list.push(row);
+    bySquadId.set(row.squad_id, list);
   });
 
   return data.map(s => {
-    const members = membersBySquadId.get(s.id) || [];
+    const rows = bySquadId.get(s.id) || [];
+    const cgRow = rows.find(r => r.is_cg);
+
+    const members: SquadMember[] = rows.map(r => ({
+      id: r.militar_id,
+      registrationNumber: r.matricula,
+      name: `${r.posto_graduacao} ${r.nome_guerra}`,
+      rank: r.posto_graduacao,
+      roleInSquad: r.funcao_na_guarnicao || 'COMBATENTE',
+      isCommander: Boolean(r.is_cg),
+      shiftHours: r.carga_horaria_horas,
+      shiftStart: r.inicio_turno,
+      shiftEnd: r.fim_turno,
+    }));
+
+    // Turno exibido = intervalo da escala do CG (ou do primeiro militar, se não houver CG definido)
+    const turnoRef = cgRow || rows[0];
+
     return {
       id: s.id,
       name: s.name,
       callSign: s.call_sign,
       unitText: s.unit_text || '',
       platoonId: s.platoon_id || '',
-      commanderName: s.commander_name || 'Comandante da VTR',
-      currentShift: s.current_shift || 'Turno 24h',
+      commanderName: cgRow ? `${cgRow.posto_graduacao} ${cgRow.nome_guerra}` : 'Sem CG escalado',
+      currentShift: formatTurnoRange(turnoRef?.inicio_turno, turnoRef?.fim_turno),
       status: (s.status || 'DISPONIVEL') as 'DISPONIVEL' | 'EM_OCORRENCIA' | 'MANUTENCAO',
       activeMembersCount: members.length,
       members,
@@ -1233,21 +1248,17 @@ export async function fetchGuarnicoesEmServico(): Promise<GuarnicaoEmServicoRow[
     call_sign: r.call_sign,
     platoon_id: r.platoon_id,
     platoon_name: r.platoon_name,
-    platoon_headquarters: r.platoon_headquarters,
-    platoon_bbm: r.platoon_bbm,
     militar_id: r.militar_id,
     matricula: r.matricula,
-    posto_graduacao: r.posto_graduacao,
     nome_guerra: r.nome_guerra,
+    posto_graduacao: r.posto_graduacao,
+    perfil: r.perfil,
     funcao_na_guarnicao: r.funcao_na_guarnicao,
+    carga_horaria_horas: r.carga_horaria_horas,
     inicio_turno: r.inicio_turno,
     fim_turno: r.fim_turno,
-    carga_horaria_horas: r.carga_horaria_horas,
     is_cg: Boolean(r.is_cg),
-    cg_tipo_definicao: r.cg_tipo_definicao || (r.is_cg ? 'EXPLICITO_E193' : undefined),
-    cg_manual_definido_por: r.cg_manual_definido_por,
-    cg_manual_definido_em: r.cg_manual_definido_em,
-    origem_escala: r.origem_escala,
+    cg_definido_explicitamente: Boolean(r.cg_definido_explicitamente),
   }));
 }
 
@@ -1287,7 +1298,7 @@ export async function importEscalaE193Rpc(entries: E193ImportEntry[]): Promise<E
     throw new Error(`Falha ao importar escala e-193: ${msg}`);
   }
 
-  return (data || { success: true }) as E193ImportResult;
+  return (data || { linhas_importadas: 0, militares_criados: 0, guarnicoes_afetadas: 0 }) as E193ImportResult;
 }
 
 /**

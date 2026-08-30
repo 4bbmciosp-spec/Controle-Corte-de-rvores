@@ -217,39 +217,38 @@ export interface E193ImportEntry {
   fim_turno: string;    // ISO string com -03:00
 }
 
+// Formato real de retorno de fn_import_escala_e193 (confirmado via pg_get_functiondef).
 export interface E193ImportResult {
-  platoons_upserted?: number;
-  squads_upserted?: number;
-  militares_upserted?: number;
-  escalas_inserted?: number;
-  escalas_updated?: number;
-  erros?: string[];
-  total_processado?: number;
-  success?: boolean;
+  linhas_importadas: number;
+  militares_criados: number;
+  guarnicoes_afetadas: number;
 }
 
 export interface GuarnicaoEmServicoRow {
+  // Colunas confirmadas diretamente na view v_guarnicao_em_servico (banco real).
+  // NÃO adicionar campos aqui sem antes confirmar que existem na view via
+  // information_schema — campos inexistentes silenciosamente viram `undefined`
+  // e escondem bugs (foi o que aconteceu com platoon_headquarters/platoon_bbm/
+  // cg_tipo_definicao/cg_manual_definido_por/cg_manual_definido_em/origem_escala).
   escala_id: string;
   squad_id: string;
   squad_name?: string;
   call_sign: string;
   platoon_id: string;
   platoon_name?: string;
-  platoon_headquarters?: string;
-  platoon_bbm?: string;
   militar_id: string;
   matricula: string;
-  posto_graduacao: string;
   nome_guerra: string;
+  posto_graduacao: string;
+  perfil: 'COBOM' | 'GUARNICAO' | 'PELOTAO';
   funcao_na_guarnicao: string;
+  carga_horaria_horas?: number;
   inicio_turno: string;
   fim_turno: string;
-  carga_horaria_horas?: number;
   is_cg: boolean;
-  cg_tipo_definicao?: 'EXPLICITO_E193' | 'AUTOMATICO_HIERARQUIA' | 'MANUAL_COBOM';
-  cg_manual_definido_por?: string;
-  cg_manual_definido_em?: string;
-  origem_escala?: string;
+  // true = CG definido manualmente pelo COBOM (fn_editar_cg_manual);
+  // false = CG veio explícito do e-193 ou foi calculado por antiguidade (fn_calcular_cg_guarnicao).
+  cg_definido_explicitamente: boolean;
 }
 
 export interface EscalaAuditoriaEntry {
