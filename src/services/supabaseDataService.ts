@@ -485,6 +485,8 @@ export async function fetchOccurrencesFromSupabase(): Promise<Occurrence[]> {
       militarResponsavelName: cgSnapshotName,
       preenchidoPorId: a.preenchido_por_id || undefined,
       preenchidoPorName: preenchidoPorName,
+      numeroE193: a.numero_e193 || undefined,
+      complementaAtendimentoId: a.complementa_atendimento_id || undefined,
       shiftInfo: squadInfo?.currentShift || 'Turno Operacional',
       startedAt: a.iniciado_em || a.created_at,
       finishedAt: a.finalizado_em || a.iniciado_em || a.created_at,
@@ -692,6 +694,10 @@ export async function recordAttendanceInSupabase(
     squad_id: record.squadId && record.squadId.includes('-') && record.squadId.length > 20 ? record.squadId : null,
     militar_responsavel_id: finalCgId && finalCgId.includes('-') && finalCgId.length > 20 ? ensureUUID(finalCgId) : null,
     preenchido_por_id: finalPreenchidoPorId && finalPreenchidoPorId.includes('-') && finalPreenchidoPorId.length > 20 ? ensureUUID(finalPreenchidoPorId) : null,
+    numero_e193: record.numeroE193 || null,
+    complementa_atendimento_id: record.complementaAtendimentoId && record.complementaAtendimentoId.includes('-') && record.complementaAtendimentoId.length > 20
+      ? ensureUUID(record.complementaAtendimentoId)
+      : null,
     iniciado_em: record.startedAt || new Date().toISOString(),
     finalizado_em: record.finishedAt || new Date().toISOString(),
     status_resultado: record.statusResult,

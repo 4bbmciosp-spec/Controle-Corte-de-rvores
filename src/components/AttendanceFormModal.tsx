@@ -85,6 +85,7 @@ export const AttendanceFormModal: React.FC<AttendanceFormModalProps> = ({
   onSuccess,
 }) => {
   const [statusResult, setStatusResult] = useState<'CONCLUIDA' | 'PENDENTE'>('CONCLUIDA');
+  const [numeroE193, setNumeroE193] = useState('');
   const [actionTaken, setActionTaken] = useState('');
   const [unresolvedReason, setUnresolvedReason] = useState<UnresolvedReason>('NECESSIDADE_APOIO_CEEE_EQUATORIAL');
   const [unresolvedDetails, setUnresolvedDetails] = useState('');
@@ -162,6 +163,11 @@ export const AttendanceFormModal: React.FC<AttendanceFormModalProps> = ({
     e.preventDefault();
     setErrorMsg('');
 
+    if (!numeroE193.trim()) {
+      setErrorMsg('Informe o número da OC gerado no e-193 para esta guarnição/etapa. Esse número é obrigatório em cada histórico.');
+      return;
+    }
+
     if (!actionTaken.trim()) {
       setErrorMsg('Por favor, descreva as ações realizadas pela guarnição.');
       return;
@@ -198,6 +204,7 @@ export const AttendanceFormModal: React.FC<AttendanceFormModalProps> = ({
           squadName: currentSquad.name,
           callSign: currentSquad.callSign,
           commanderName: `${currentUser.rank} ${currentUser.name}`,
+          numeroE193: numeroE193.trim(),
           shiftInfo: currentSquad.currentShift,
           startedAt: occurrence.lastAttendanceAt || new Date(Date.now() - 45 * 60 * 1000).toISOString(),
           finishedAt: nowIso,
@@ -391,6 +398,24 @@ export const AttendanceFormModal: React.FC<AttendanceFormModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* NÚMERO DA OC NO E-193 (obrigatório para ESTA guarnição/etapa) */}
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+              Número da OC no e-193 (desta guarnição/etapa) *
+            </label>
+            <input
+              type="text"
+              value={numeroE193}
+              onChange={(e) => setNumeroE193(e.target.value)}
+              placeholder="Ex: 193-2026-04521"
+              className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs text-slate-900 font-mono focus:ring-1 focus:ring-red-600 focus:border-red-600 placeholder:text-slate-400 shadow-sm"
+              required
+            />
+            <p className="text-[10px] text-slate-500 mt-1">
+              Cada guarnição que finaliza uma etapa precisa registrar o número da OC gerado no e-193 para essa etapa específica — usado como referência de pesquisa e vínculo com o sistema oficial.
+            </p>
+          </div>
 
           {/* O QUE FOI FEITO */}
           <div>

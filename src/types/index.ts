@@ -117,6 +117,8 @@ export interface AttendanceRecord {
   militarResponsavelName?: string;
   preenchidoPorId?: string; // Militar logado que digitou
   preenchidoPorName?: string;
+  numeroE193?: string; // Número da OC gerado no e-193 para ESTA etapa/guarnição específica
+  complementaAtendimentoId?: string; // Se preenchido, é um histórico complementar (não sobrescreve o original)
   shiftInfo: string;
   startedAt: string;
   finishedAt: string;
