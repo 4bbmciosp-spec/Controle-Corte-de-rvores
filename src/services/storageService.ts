@@ -45,11 +45,22 @@ export async function createOccurrence(
   newOcc: Omit<Occurrence, 'id' | 'protocol' | 'createdAt' | 'updatedAt' | 'attendances' | 'totalAttendancesCount' | 'isCarriedOver'>,
   militarUuid?: string
 ): Promise<Occurrence> {
-  const nextNum = String(Date.now()).slice(-5);
   const year = new Date().getFullYear();
-  const protocol = `CBMRS-${year}-${nextNum}`;
   const id = ensureUUID();
   const nowIso = new Date().toISOString();
+
+  function gerarProtocolo(): string {
+    // ANTES: só os últimos 5 dígitos de Date.now() — se repete a cada 100s,
+    // então duas OCs criadas dentro da mesma janela de 100s (bem comum numa
+    // noite de temporal, com várias chamadas seguidas) geravam o MESMO
+    // protocolo. A tabela tem UNIQUE(protocolo), então a 2ª OC falhava ao
+    // gravar e o operador perdia o registro sem necessariamente perceber o
+    // erro na tela. Agora: timestamp completo em base36 + 3 caracteres
+    // aleatórios — o espaço de colisão é astronomicamente menor, e ainda
+    // assim há uma nova tentativa automática abaixo como rede de segurança.
+    const rand = Math.random().toString(36).slice(2, 5).toUpperCase();
+    return `CBMRS-${year}-${Date.now().toString(36).toUpperCase()}${rand}`;
+  }
 
   // Snapshot do CG de despacho no momento da criação/despacho
   let cgId = newOcc.cgGuarnicaoDespachoId;
@@ -66,21 +77,38 @@ export async function createOccurrence(
     }
   }
 
-  const fullOccurrence: Occurrence = {
+  const fullOccurrenceBase = {
     ...newOcc,
     id,
-    protocol,
     cgGuarnicaoDespachoId: cgId,
     cgGuarnicaoDespachoName: cgName,
     createdAt: nowIso,
     updatedAt: nowIso,
-    attendances: [],
+    attendances: [] as Occurrence['attendances'],
     totalAttendancesCount: 0,
     isCarriedOver: false,
   };
 
-  // 1. Grava obrigatoriamente no Supabase e aguarda confirmação
-  const savedOcc = await insertOccurrenceToSupabase(fullOccurrence, militarUuid);
+  // 1. Grava obrigatoriamente no Supabase e aguarda confirmação.
+  //    Rede de segurança: se por acaso o protocolo colidir com um já
+  //    existente (UNIQUE(protocolo)), gera outro e tenta de novo, em vez de
+  //    simplesmente falhar e o operador perder o que digitou.
+  let savedOcc: Occurrence | null = null;
+  let lastError: any = null;
+  let protocol = gerarProtocolo();
+  for (let attempt = 0; attempt < 3 && !savedOcc; attempt++) {
+    if (attempt > 0) protocol = gerarProtocolo();
+    const fullOccurrence: Occurrence = { ...fullOccurrenceBase, protocol };
+    try {
+      savedOcc = await insertOccurrenceToSupabase(fullOccurrence, militarUuid);
+    } catch (err: any) {
+      lastError = err;
+      const msg = (err?.message || '').toLowerCase();
+      const isProtocolCollision = msg.includes('protocolo') && (msg.includes('duplicate') || msg.includes('unique') || msg.includes('23505') || msg.includes('já existe'));
+      if (!isProtocolCollision) throw err; // erro diferente: não adianta tentar de novo
+    }
+  }
+  if (!savedOcc) throw lastError || new Error('Falha ao gerar um protocolo único para a ocorrência após múltiplas tentativas.');
 
   // 2. Notificação no Supabase
   const notif: AppNotification = {
