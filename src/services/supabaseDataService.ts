@@ -510,6 +510,7 @@ export async function fetchOccurrencesFromSupabase(): Promise<Occurrence[]> {
     return {
       id: row.id,
       protocol: row.protocolo,
+      numeroE193: row.numero_e193 || '',
       createdAt: row.created_at,
       updatedAt: row.updated_at || row.created_at,
       initialRequestDate: row.data_solicitacao_inicial || undefined,
@@ -553,6 +554,7 @@ export async function insertOccurrenceToSupabase(occ: Occurrence, militarUuid?: 
   const occPayload = {
     id: occId,
     protocolo: occ.protocol,
+    numero_e193: occ.numeroE193 || null,
     aberta_por: militarUuid ? ensureUUID(militarUuid) : null,
     data_solicitacao_inicial: occ.initialRequestDate ? new Date(occ.initialRequestDate).toISOString() : null,
     solicitante_nome: occ.solicitorName,
@@ -624,6 +626,7 @@ export async function updateOccurrenceInSupabase(occ: Occurrence): Promise<void>
 
   const occPayload = {
     protocolo: occ.protocol,
+    numero_e193: occ.numeroE193 || null,
     data_solicitacao_inicial: occ.initialRequestDate ? new Date(occ.initialRequestDate).toISOString() : null,
     solicitante_nome: occ.solicitorName,
     solicitante_telefone: occ.solicitorPhone,

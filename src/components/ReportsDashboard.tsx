@@ -198,6 +198,7 @@ export const ReportsDashboard: React.FC<ReportsDashboardProps> = ({
   const handleExportCSV = () => {
     const headers = [
       'Protocolo',
+      'Número OC (e-193)',
       'Data de Abertura',
       'Hora de Abertura',
       'Status Operacional',
@@ -239,6 +240,7 @@ export const ReportsDashboard: React.FC<ReportsDashboardProps> = ({
 
       return [
         `"${cleanText(occ.protocol)}"`,
+        `"${cleanText(occ.numeroE193)}"`,
         `"${formattedDate}"`,
         `"${formattedTime}"`,
         `"${cleanText(occ.status)}"`,
@@ -574,6 +576,7 @@ export const ReportsDashboard: React.FC<ReportsDashboardProps> = ({
             <thead>
               <tr className="bg-slate-100 text-slate-600 border-b border-slate-200">
                 <th className="p-2 font-bold">Protocolo</th>
+                <th className="p-2 font-bold">Nº e-193</th>
                 <th className="p-2 font-bold">Data</th>
                 <th className="p-2 font-bold">Endereço / Bairro</th>
                 <th className="p-2 font-bold">Natureza do Despacho</th>
@@ -588,6 +591,7 @@ export const ReportsDashboard: React.FC<ReportsDashboardProps> = ({
                 return (
                   <tr key={occ.id} className="hover:bg-slate-50">
                     <td className="p-2 font-mono font-bold text-red-900">{occ.protocol}</td>
+                    <td className="p-2 font-mono text-amber-800">{occ.numeroE193 || '—'}</td>
                     <td className="p-2 text-slate-500 whitespace-nowrap">
                       {new Date(occ.createdAt).toLocaleDateString('pt-BR')}
                     </td>

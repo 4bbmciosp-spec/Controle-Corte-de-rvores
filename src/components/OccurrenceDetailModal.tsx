@@ -159,6 +159,11 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                     {occurrence.protocol}
                   </h2>
                   {getUrgencyBadge()}
+                  {occurrence.numeroE193 && (
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-900 rounded text-[10px] font-bold font-mono print:border print:border-amber-400">
+                      e-193: {occurrence.numeroE193}
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-red-100 print:text-slate-600 font-medium">
                   {platoon?.name} • Aberta em {new Date(occurrence.createdAt).toLocaleString('pt-BR')} por {occurrence.openedBy}

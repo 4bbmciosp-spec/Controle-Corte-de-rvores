@@ -130,7 +130,8 @@ export interface AttendanceRecord {
 
 export interface Occurrence {
   id: string;
-  protocol: string; // ex: "CBMRS-2026-00482"
+  protocol: string; // ex: "CBMRS-2026-00482" — protocolo interno do app
+  numeroE193: string; // Número/protocolo da OC no sistema oficial e-193 (obrigatório) — referência de pesquisa e vínculo com o e-193
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
   initialRequestDate?: string; // Data da 1ª Solicitação pelo solicitante (ex: "2026-08-25T08:00")

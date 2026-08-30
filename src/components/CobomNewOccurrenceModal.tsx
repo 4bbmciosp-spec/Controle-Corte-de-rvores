@@ -41,7 +41,8 @@ import {
   RefreshCw,
   Compass,
   Check,
-  AlertCircle
+  AlertCircle,
+  FileText
 } from 'lucide-react';
 
 interface CobomNewOccurrenceModalProps {
@@ -66,6 +67,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
   const isEditing = !!initialOccurrence;
 
   // Form State
+  const [numeroE193, setNumeroE193] = useState(initialOccurrence?.numeroE193 || '');
   const [solicitorName, setSolicitorName] = useState(initialOccurrence?.solicitorName || '');
   const [solicitorPhone, setSolicitorPhone] = useState(initialOccurrence?.solicitorPhone || '');
   const [firstRequestDate, setFirstRequestDate] = useState(
@@ -302,6 +304,10 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
     e.preventDefault();
     setErrorMsg('');
 
+    if (!numeroE193.trim()) {
+      setErrorMsg('Informe o número da ocorrência gerado no e-193. Esse número é obrigatório e é usado como referência de pesquisa e vínculo com o sistema oficial.');
+      return;
+    }
     if (!solicitorName.trim() || !solicitorPhone.trim()) {
       setErrorMsg('Informe o nome e telefone do solicitante.');
       return;
@@ -324,6 +330,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
       if (isEditing && initialOccurrence) {
         const updated: Occurrence = {
           ...initialOccurrence,
+          numeroE193,
           solicitorName,
           solicitorPhone,
           initialRequestDate: firstRequestDate,
@@ -347,6 +354,7 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
         onSaved(updated);
       } else {
         const created = await createOccurrence({
+          numeroE193,
           openedBy: `COBOM - ${currentUser.rank} ${currentUser.name}`,
           solicitorName,
           solicitorPhone,
@@ -413,6 +421,28 @@ export const CobomNewOccurrenceModal: React.FC<CobomNewOccurrenceModalProps> = (
               <span className="font-semibold">{errorMsg}</span>
             </div>
           )}
+
+          {/* 0. VÍNCULO COM O E-193 (obrigatório) */}
+          <div className="p-3.5 bg-amber-50 rounded-xl border-2 border-amber-300 shadow-sm space-y-2.5">
+            <div className="flex items-center gap-2 text-amber-800 font-bold uppercase tracking-wider text-[11px]">
+              <FileText className="w-3.5 h-3.5" />
+              <span>Vínculo com o Sistema Oficial e-193</span>
+            </div>
+            <div>
+              <label className="block text-slate-700 font-bold mb-1">Número da Ocorrência no e-193 *</label>
+              <input
+                type="text"
+                value={numeroE193}
+                onChange={(e) => setNumeroE193(e.target.value)}
+                placeholder="Ex: 2026-193-004521"
+                className="w-full bg-white border border-amber-400 rounded-lg px-3 py-2 text-slate-900 focus:ring-1 focus:ring-red-600 focus:border-red-600 font-mono"
+                required
+              />
+              <p className="text-[10.5px] text-amber-700 mt-1">
+                Obrigatório. Usado como referência de pesquisa e para vincular esta ocorrência ao registro oficial do e-193.
+              </p>
+            </div>
+          </div>
 
           {/* 1. DADOS DO SOLICITANTE */}
           <div className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-sm space-y-2.5">
