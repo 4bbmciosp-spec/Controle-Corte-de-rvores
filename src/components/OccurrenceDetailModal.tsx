@@ -5,7 +5,6 @@ import { PhotoViewerModal } from './PhotoViewerModal';
 import { 
   X, 
   MapPin, 
-  Phone, 
   Clock, 
   Calendar, 
   AlertTriangle, 
@@ -400,26 +399,16 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                         </div>
                       )}
                     </div>
-                    <div className="flex flex-col gap-1.5">
-                      <a
-                        href={toWhatsAppLink(occurrence.solicitorPhone, occurrence)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded-md text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
-                        title="Abrir conversa no WhatsApp"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>WhatsApp</span>
-                      </a>
-                      <a
-                        href={`tel:${occurrence.solicitorPhone.replace(/\D/g, '')}`}
-                        className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-semibold flex items-center gap-1.5 transition-colors"
-                        title="Ligar para o solicitante"
-                      >
-                        <Phone className="w-3 h-3" />
-                        <span>Ligar</span>
-                      </a>
-                    </div>
+                    <a
+                      href={toWhatsAppLink(occurrence.solicitorPhone, occurrence)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded-md text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
+                      title="Abrir conversa no WhatsApp"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>WhatsApp</span>
+                    </a>
                   </div>
                 </div>
               </div>
