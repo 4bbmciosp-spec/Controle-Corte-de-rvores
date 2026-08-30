@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Occurrence, Squad, User, OccurrencePhoto, Platoon } from '../types';
-import { getHoursPending, setSquadInAttendance } from '../services/storageService';
+import { getHoursPending, setSquadInAttendance, updateAttendanceTextInSupabase } from '../services/storageService';
 import { PhotoViewerModal } from './PhotoViewerModal';
 import { 
   X, 
@@ -55,6 +55,11 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
   onDeleteOccurrence,
 }) => {
   const [selectedPhoto, setSelectedPhoto] = useState<OccurrencePhoto | null>(null);
+  const [editingAttendanceId, setEditingAttendanceId] = useState<string | null>(null);
+  const [editActionTaken, setEditActionTaken] = useState('');
+  const [editUnresolvedDetails, setEditUnresolvedDetails] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
 
   const hoursPending = getHoursPending(occurrence);
   const assignedSquad = squads.find(s => s.id === occurrence.assignedSquadId);
@@ -66,6 +71,59 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
 
   const isAssignedToCurrentSquad = currentUser.squadId === occurrence.assignedSquadId;
   const isPendingOverdue = occurrence.status === 'PENDENTE' && (hoursPending >= 12 || occurrence.isCarriedOver);
+
+  const handleOpenEditAttendance = (att: Occurrence['attendances'][number]) => {
+    setEditingAttendanceId(att.id);
+    setEditActionTaken(att.actionTaken || '');
+    setEditUnresolvedDetails(att.unresolvedDetails || '');
+    setEditError('');
+  };
+
+  const handleCancelEditAttendance = () => {
+    setEditingAttendanceId(null);
+    setEditError('');
+  };
+
+  const handleSaveEditAttendance = async (att: Occurrence['attendances'][number]) => {
+    if (!editActionTaken.trim()) {
+      setEditError('O histórico não pode ficar vazio.');
+      return;
+    }
+    setEditSaving(true);
+    setEditError('');
+    try {
+      await updateAttendanceTextInSupabase(
+        att.id,
+        {
+          actionTaken: editActionTaken.trim(),
+          unresolvedDetails: att.statusResult === 'PENDENTE' ? editUnresolvedDetails.trim() || null : undefined,
+        },
+        currentUser.id
+      );
+
+      const nowIso = new Date().toISOString();
+      const updatedOccurrence: Occurrence = {
+        ...occurrence,
+        attendances: occurrence.attendances.map(a =>
+          a.id === att.id
+            ? {
+                ...a,
+                actionTaken: editActionTaken.trim(),
+                unresolvedDetails: att.statusResult === 'PENDENTE' ? editUnresolvedDetails.trim() || undefined : a.unresolvedDetails,
+                editedAt: nowIso,
+                editedByName: `${currentUser.rank} ${currentUser.name}`,
+              }
+            : a
+        ),
+      };
+      onUpdateOccurrence(updatedOccurrence);
+      setEditingAttendanceId(null);
+    } catch (err: any) {
+      setEditError(err?.message || 'Falha ao salvar a edição.');
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   const handleStartAttendance = async () => {
     if (!currentUser.squadId) return;
@@ -520,18 +578,81 @@ export const OccurrenceDetailModal: React.FC<OccurrenceDetailModalProps> = ({
                               }`}>
                                 {isConcluded ? '✅ Concluída' : '⚠️ Não Concluída (Pendente)'}
                               </span>
+                              {isCobom && editingAttendanceId !== att.id && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditAttendance(att)}
+                                  className="p-1 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded cursor-pointer print:hidden"
+                                  title="Editar este registro"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </div>
 
                           {/* Histórico conforme E-193 */}
-                          <div>
-                            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                              Histórico conforme E-193:
-                            </span>
-                            <p className="text-slate-800 text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200 leading-relaxed">
-                              {att.actionTaken}
-                            </p>
-                          </div>
+                          {editingAttendanceId === att.id ? (
+                            <div className="space-y-2">
+                              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                                Editar Histórico conforme E-193:
+                              </span>
+                              <textarea
+                                value={editActionTaken}
+                                onChange={(e) => setEditActionTaken(e.target.value)}
+                                rows={5}
+                                className="w-full text-xs bg-white p-2.5 rounded-lg border border-red-300 focus:ring-1 focus:ring-red-500 focus:border-red-500 leading-relaxed"
+                              />
+                              {!isConcluded && (
+                                <div>
+                                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                                    Detalhes da Pendência:
+                                  </span>
+                                  <textarea
+                                    value={editUnresolvedDetails}
+                                    onChange={(e) => setEditUnresolvedDetails(e.target.value)}
+                                    rows={2}
+                                    className="w-full text-xs bg-white p-2.5 rounded-lg border border-red-300 focus:ring-1 focus:ring-red-500 focus:border-red-500 leading-relaxed"
+                                  />
+                                </div>
+                              )}
+                              {editError && (
+                                <p className="text-[11px] text-red-700 font-semibold">{editError}</p>
+                              )}
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={editSaving}
+                                  onClick={() => handleSaveEditAttendance(att)}
+                                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white rounded-lg text-[11px] font-bold cursor-pointer"
+                                >
+                                  {editSaving ? 'Salvando...' : 'Salvar Correção'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelEditAttendance}
+                                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[11px] font-bold cursor-pointer"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                                Histórico conforme E-193:
+                              </span>
+                              <p className="text-slate-800 text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200 leading-relaxed whitespace-pre-line">
+                                {att.actionTaken}
+                              </p>
+                              {att.editedAt && (
+                                <p className="text-[10px] text-amber-700 mt-1 flex items-center gap-1">
+                                  <Edit3 className="w-3 h-3" />
+                                  Editado em {new Date(att.editedAt).toLocaleString('pt-BR')}{att.editedByName ? ` por ${att.editedByName}` : ''}
+                                </p>
+                              )}
+                            </div>
+                          )}
 
                           {/* MOTIVO SE NÃO CONCLUÍDA */}
                           {!isConcluded && (

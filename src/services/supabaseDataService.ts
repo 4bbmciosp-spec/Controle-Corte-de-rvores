@@ -494,6 +494,8 @@ export async function fetchOccurrencesFromSupabase(): Promise<Occurrence[]> {
       unresolvedDetails: a.detalhes_nao_concluida || undefined,
       equipmentUsed: Array.isArray(a.equipamentos_utilizados) ? a.equipamentos_utilizados : [],
       photos: photosByAttendance.get(a.id) || [],
+      editedAt: a.editado_em || undefined,
+      editedByName: a.editado_por_id ? militarMap.get(a.editado_por_id) : undefined,
     };
 
     const list = attendancesByOcc.get(a.ocorrencia_id) || [];
@@ -755,6 +757,49 @@ export async function recordAttendanceInSupabase(
     militarResponsavelId: finalCgId || undefined,
     preenchidoPorId: finalPreenchidoPorId || undefined,
   };
+}
+
+/**
+ * Edita o texto/detalhes de um atendimento JÁ REGISTRADO (inclusive depois
+ * da ocorrência estar CONCLUÍDA) — item 3A. Só altera os campos de texto;
+ * NÃO mexe em iniciado_em/finalizado_em/squad_id/militar_responsavel_id/
+ * preenchido_por_id, que continuam sendo o snapshot original de quem
+ * atendeu e quando. Fica registrado em editado_em/editado_por_id para
+ * transparência de que o registro foi corrigido posteriormente.
+ */
+export async function updateAttendanceTextInSupabase(
+  attendanceId: string,
+  updates: {
+    actionTaken?: string;
+    unresolvedReason?: string | null;
+    unresolvedDetails?: string | null;
+    equipmentUsed?: string[];
+  },
+  editedByMilitarId?: string
+): Promise<void> {
+  if (!isSupabaseConfigured()) throw new Error('Supabase não configurado.');
+
+  const attId = ensureUUID(attendanceId);
+
+  const payload: any = {
+    editado_em: new Date().toISOString(),
+  };
+  if (editedByMilitarId && editedByMilitarId.includes('-') && editedByMilitarId.length > 20) {
+    payload.editado_por_id = ensureUUID(editedByMilitarId);
+  }
+  if (updates.actionTaken !== undefined) payload.acao_realizada = updates.actionTaken;
+  if (updates.unresolvedReason !== undefined) payload.motivo_nao_concluida = updates.unresolvedReason;
+  if (updates.unresolvedDetails !== undefined) payload.detalhes_nao_concluida = updates.unresolvedDetails;
+  if (updates.equipmentUsed !== undefined) payload.equipamentos_utilizados = updates.equipmentUsed;
+
+  const { error } = await supabase
+    .from('atendimentos')
+    .update(payload)
+    .eq('id', attId);
+
+  if (error) {
+    throw new Error(`Falha ao editar o atendimento: ${error.message}`);
+  }
 }
 
 /**

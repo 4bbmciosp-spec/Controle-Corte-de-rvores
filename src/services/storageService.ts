@@ -12,6 +12,7 @@ import {
   updateOccurrenceInSupabase,
   deleteOccurrenceFromSupabase,
   recordAttendanceInSupabase,
+  updateAttendanceTextInSupabase,
   insertNotificationToSupabase,
   fetchOccurrencesFromSupabase,
   upsertSquadToSupabase,
@@ -29,6 +30,7 @@ export {
   getActiveCgForSquadAtTime,
   logCgManualChangeInAuditoria,
   buildOccurrenceTimeline,
+  updateAttendanceTextInSupabase,
 };
 
 /**

@@ -126,6 +126,8 @@ export interface AttendanceRecord {
   unresolvedDetails?: string;
   equipmentUsed: string[];
   photos: OccurrencePhoto[];
+  editedAt?: string; // Preenchido se o registro foi editado após criado
+  editedByName?: string;
 }
 
 export interface Occurrence {
