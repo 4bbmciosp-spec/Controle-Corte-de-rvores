@@ -516,7 +516,7 @@ export async function fetchOccurrencesFromSupabase(): Promise<Occurrence[]> {
       createdAt: row.created_at,
       updatedAt: row.updated_at || row.created_at,
       initialRequestDate: row.data_solicitacao_inicial || undefined,
-      openedBy: row.aberta_por || 'COBOM 193',
+      openedBy: (row.aberta_por ? militarMap.get(row.aberta_por) : undefined) || row.aberta_por || 'COBOM 193',
       solicitorName: row.solicitante_nome,
       solicitorPhone: row.solicitante_telefone,
       address: row.endereco,

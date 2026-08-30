@@ -74,7 +74,7 @@ export const loginWithMatricula = async (
     // 2. Busca o registro do militar na tabela 'militares' usando apenas colunas reais do schema
     let { data: militarData, error: militarError } = await supabase
       .from('militares')
-      .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria')
+      .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria, is_comandante')
       .eq('auth_user_id', authData.user.id)
       .maybeSingle();
 
@@ -82,7 +82,7 @@ export const loginWithMatricula = async (
     if (!militarData) {
       const { data: byMatricula, error: matErr } = await supabase
         .from('militares')
-        .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria')
+        .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria, is_comandante')
         .eq('matricula', cleanMatricula)
         .maybeSingle();
 
@@ -124,7 +124,7 @@ export const loginWithMatricula = async (
       pelotao_id: militarData.platoon_atual_id || undefined,
       guarnicao_id: militarData.squad_atual_id || undefined,
       funcao_na_guarnicao: militarData.perfil === 'COBOM' ? 'OPERADOR COBOM' : 'COMBATENTE',
-      is_comandante: militarData.posto_graduacao.includes('SGT') || militarData.posto_graduacao.includes('TEN') || militarData.posto_graduacao.includes('CAP'),
+      is_comandante: Boolean(militarData.is_comandante),
     };
 
     return {
@@ -199,7 +199,7 @@ export const getCurrentMilitar = async (): Promise<MilitarUser | null> => {
     // Busca o militar pela FK auth_user_id
     let { data: militarData, error: militarError } = await supabase
       .from('militares')
-      .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria')
+      .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria, is_comandante')
       .eq('auth_user_id', session.user.id)
       .maybeSingle();
 
@@ -207,7 +207,7 @@ export const getCurrentMilitar = async (): Promise<MilitarUser | null> => {
       const matriculaFromEmail = session.user.email.replace('@4bbm.cbm', '').trim();
       const { data: byMat } = await supabase
         .from('militares')
-        .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria')
+        .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria, is_comandante')
         .eq('matricula', matriculaFromEmail)
         .maybeSingle();
       militarData = byMat;
@@ -233,7 +233,7 @@ export const getCurrentMilitar = async (): Promise<MilitarUser | null> => {
       pelotao_id: militarData.platoon_atual_id || undefined,
       guarnicao_id: militarData.squad_atual_id || undefined,
       funcao_na_guarnicao: militarData.perfil === 'COBOM' ? 'OPERADOR COBOM' : 'COMBATENTE',
-      is_comandante: militarData.posto_graduacao.includes('SGT') || militarData.posto_graduacao.includes('TEN') || militarData.posto_graduacao.includes('CAP'),
+      is_comandante: Boolean(militarData.is_comandante),
     };
   } catch (err) {
     console.error('Erro ao recuperar militar autenticado no Supabase:', err);
@@ -264,7 +264,7 @@ export const getAllMilitares = async (): Promise<MilitarUser[]> => {
 
   const { data, error } = await supabase
     .from('militares')
-    .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria')
+    .select('id, matricula, posto_graduacao, nome_guerra, auth_user_id, created_at, perfil, squad_atual_id, platoon_atual_id, senha_temporaria, is_comandante')
     .order('nome_guerra', { ascending: true });
 
   if (error) {
@@ -287,7 +287,7 @@ export const getAllMilitares = async (): Promise<MilitarUser[]> => {
     pelotao_id: row.platoon_atual_id || undefined,
     guarnicao_id: row.squad_atual_id || undefined,
     funcao_na_guarnicao: row.perfil === 'COBOM' ? 'OPERADOR COBOM' : 'COMBATENTE',
-    is_comandante: row.posto_graduacao.includes('SGT') || row.posto_graduacao.includes('TEN') || row.posto_graduacao.includes('CAP'),
+    is_comandante: Boolean(row.is_comandante),
   }));
 };
 
